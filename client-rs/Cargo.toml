@@ -3,6 +3,7 @@ name = "hots-replay-client"
 version = "1.0.0"
 edition = "2021"
 description = "Heroes of the Storm replay uploader"
+license = "MIT"
 
 [dependencies]
 eframe = { version = "0.31", features = ["persistence"] }
