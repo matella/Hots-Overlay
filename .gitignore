@@ -3,3 +3,4 @@ data/
 .env
 client/dist/
 .claude/
+client-rs/target/
