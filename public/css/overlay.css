@@ -1,0 +1,96 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+#overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 8px 12px;
+  gap: 6px;
+}
+
+#stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.75);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.stat.win { color: #4ade80; }
+.stat.loss { color: #f87171; }
+.stat.rate { color: #fbbf24; }
+.stat-sep { color: #6b7280; }
+.mode-label { color: #93c5fd; }
+
+#game-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.game-tile {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 3px solid;
+  flex-shrink: 0;
+}
+
+.game-tile.win {
+  border-color: #4ade80;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.4);
+}
+
+.game-tile.loss {
+  border-color: #f87171;
+  box-shadow: 0 0 8px rgba(248, 113, 113, 0.4);
+}
+
+.game-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Mode badge on tile (visible when showing all modes) */
+.game-tile .mode-badge {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  font-size: 8px;
+  font-weight: 700;
+  text-align: center;
+  padding: 1px 0;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  line-height: 1;
+  background: rgba(0, 0, 0, 0.7);
+}
+
+.game-tile.new {
+  animation: slideIn 0.4s ease-out;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(30px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}

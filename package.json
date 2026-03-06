@@ -1,0 +1,17 @@
+{
+  "name": "hots-overlay",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "chokidar": "^4.0.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "hots-parser": "^7.55.7",
+    "ws": "^8.18.0"
+  }
+}
