@@ -1,0 +1,18 @@
+services:
+  overlay:
+    build: .
+    ports:
+      - "${PORT:-3001}:${PORT:-3001}"
+    volumes:
+      - overlay-data:/app/data
+    environment:
+      - TOON_HANDLE=${TOON_HANDLE}
+      - PORT=${PORT:-3001}
+      - REPLAY_DIR=/app/replays
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - GAME_MODE=${GAME_MODE:-Storm League}
+      - MODE_LABEL_Custom=${MODE_LABEL_Custom:-}
+    restart: unless-stopped
+
+volumes:
+  overlay-data:

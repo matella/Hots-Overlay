@@ -1,9 +1,20 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const db = require('./database');
 const config = require('./config');
 const { getHeroImageUrl } = require('./heroNames');
 
 const router = express.Router();
+
+const upload = multer({
+  dest: config.replayDir,
+  fileFilter: (_req, file, cb) => {
+    cb(null, file.originalname.endsWith('.StormReplay'));
+  },
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
+});
 
 function resolveMode(query) {
   const mode = query.mode;
@@ -56,6 +67,25 @@ router.get('/sessions', (req, res) => {
 
 router.get('/modes', (_req, res) => {
   res.json({ modes: db.getAvailableModes(), default: config.gameMode, labels: config.modeLabels });
+});
+
+function checkAuth(req, res, next) {
+  if (!config.authToken) return next();
+  const header = req.headers.authorization;
+  if (header === `Bearer ${config.authToken}`) return next();
+  res.status(401).json({ error: 'Invalid or missing auth token.' });
+}
+
+router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No .StormReplay file provided.' });
+  }
+
+  // Rename from multer's random name to the original filename
+  const dest = path.join(config.replayDir, req.file.originalname);
+  fs.renameSync(req.file.path, dest);
+
+  res.json({ status: 'ok', filename: req.file.originalname });
 });
 
 module.exports = router;

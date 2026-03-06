@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const fs = require('fs');
 const { WebSocketServer } = require('ws');
 const path = require('path');
 const config = require('./src/config');
@@ -9,6 +10,7 @@ const { startWatcher } = require('./src/watcher');
 const { getHeroImageUrl } = require('./src/heroNames');
 const routes = require('./src/routes');
 
+fs.mkdirSync(config.replayDir, { recursive: true });
 db.initDatabase();
 
 const app = express();

@@ -14,6 +14,7 @@ const config = Object.freeze({
   port: parseInt(process.env.PORT, 10) || 3000,
   dbPath: path.resolve(process.env.DB_PATH || './data/overlay.db'),
   gameMode: process.env.GAME_MODE || 'Storm League',
+  authToken: process.env.AUTH_TOKEN || null,
   modeLabels,
 });
 
