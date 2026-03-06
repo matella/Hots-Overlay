@@ -5,8 +5,12 @@ const multer = require('multer');
 const db = require('./database');
 const config = require('./config');
 const { getHeroImageUrl } = require('./heroNames');
+const { parseReplay } = require('./parser');
 
 const router = express.Router();
+
+let broadcast = () => {};
+function init(broadcastFn) { broadcast = broadcastFn; }
 
 const upload = multer({
   dest: config.replayDir,
@@ -81,11 +85,36 @@ router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
     return res.status(400).json({ error: 'No .StormReplay file provided.' });
   }
 
-  // Rename from multer's random name to the original filename
-  const dest = path.join(config.replayDir, req.file.originalname);
+  const filename = req.file.originalname;
+  const dest = path.join(config.replayDir, filename);
   fs.renameSync(req.file.path, dest);
 
-  res.json({ status: 'ok', filename: req.file.originalname });
+  // Parse immediately instead of relying on the file watcher
+  const parsed = parseReplay(dest);
+  if (!parsed) {
+    db.markFileProcessed(filename);
+    return res.json({ status: 'ok', filename, parsed: false });
+  }
+
+  db.insertReplay(parsed);
+  db.markFileProcessed(filename);
+
+  broadcast({
+    type: 'new_game',
+    game: {
+      gameDate: parsed.gameDate,
+      map: parsed.map,
+      gameMode: parsed.gameMode,
+      hero: parsed.hero,
+      heroShort: parsed.heroShort,
+      heroImage: getHeroImageUrl(parsed.hero),
+      win: Boolean(parsed.win),
+      duration: parsed.duration,
+    },
+  });
+
+  res.json({ status: 'ok', filename, parsed: true });
 });
 
 module.exports = router;
+module.exports.init = init;

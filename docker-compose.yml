@@ -12,6 +12,7 @@ services:
       - AUTH_TOKEN=${AUTH_TOKEN:-}
       - GAME_MODE=${GAME_MODE:-Storm League}
       - MODE_LABEL_Custom=${MODE_LABEL_Custom:-}
+      - TZ=${TZ:-America/New_York}
     restart: unless-stopped
 
 volumes:

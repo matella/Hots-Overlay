@@ -52,6 +52,7 @@ function initDatabase() {
       VALUES (@filename, @gameDate, @map, @gameMode, @hero, @heroShort, @win, @duration, @playerName)
     `),
     allProcessed: db.prepare('SELECT filename FROM processed_files'),
+    isProcessed: db.prepare('SELECT 1 FROM processed_files WHERE filename = ?'),
     markProcessed: db.prepare('INSERT OR IGNORE INTO processed_files (filename) VALUES (?)'),
 
     todayByMode: db.prepare(`
@@ -114,6 +115,10 @@ function getAllProcessedFilenames() {
   return new Set(stmts.allProcessed.all().map(r => r.filename));
 }
 
+function isFileProcessed(filename) {
+  return !!stmts.isProcessed.get(filename);
+}
+
 function markFileProcessed(filename) {
   stmts.markProcessed.run(filename);
 }
@@ -158,6 +163,7 @@ module.exports = {
   computeStats,
   insertReplay,
   getAllProcessedFilenames,
+  isFileProcessed,
   markFileProcessed,
   getTodayGames,
   getSessionGames,

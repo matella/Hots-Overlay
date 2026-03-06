@@ -123,10 +123,13 @@ Create a `.env` file in the project root:
 TOON_HANDLE=2-Hero-1-2844614
 PORT=3001
 AUTH_TOKEN=your-secret-token
+TZ=America/New_York
 MODE_LABEL_Custom=Scrims
 ```
 
 > `REPLAY_DIR` is set automatically in the Docker container (`/app/replays`). You don't need to set it.
+>
+> `TZ` sets the container timezone (defaults to `America/New_York`). Set this to your local timezone so "today" matches your actual day. See [timezone list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
 
 #### 3. Start the container
 

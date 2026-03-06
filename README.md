@@ -85,6 +85,7 @@ Control the displayed mode via the `?mode=` URL parameter (case-insensitive):
 | `GAME_MODE` | No | Default game mode (default: `Storm League`) |
 | `DB_PATH` | No | SQLite database path (default: `./data/overlay.db`) |
 | `AUTH_TOKEN` | No | Shared secret for upload endpoint |
+| `TZ` | No | Timezone for Docker (default: `America/New_York`) |
 | `MODE_LABEL_*` | No | Custom display labels (e.g. `MODE_LABEL_Custom=Scrims`) |
 
 ### Client (`client/.env`)

@@ -27,6 +27,8 @@ function broadcast(data) {
   }
 }
 
+routes.init(broadcast);
+
 server.listen(config.port, () => {
   console.log(`Overlay: http://localhost:${config.port}`);
 
@@ -39,14 +41,17 @@ server.listen(config.port, () => {
   console.log(`Done: ${result.newlyParsed} new, ${result.alreadyCached} cached`);
 
   startWatcher(config.replayDir, (filePath) => {
+    const filename = path.basename(filePath);
+    if (db.isFileProcessed(filename)) return;
+
     const parsed = parseReplay(filePath);
     if (!parsed) {
-      db.markFileProcessed(path.basename(filePath));
+      db.markFileProcessed(filename);
       return;
     }
 
     db.insertReplay(parsed);
-    db.markFileProcessed(path.basename(filePath));
+    db.markFileProcessed(filename);
 
     // Broadcast to all clients - they filter by their active mode
     broadcast({
