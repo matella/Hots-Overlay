@@ -12,6 +12,7 @@ pub enum UploadStatus {
     Success,
     Failed,
     Duplicate,
+    Skipped, // Server disconnected — will retry on reconnect
 }
 
 // --- Watcher status ---

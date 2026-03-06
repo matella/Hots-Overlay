@@ -75,7 +75,16 @@ pub fn start_watcher(
                         });
                     }
                     for path in ready {
-                        uploader::upload_file(&path, &state_clone, &tx_clone).await;
+                        let connected = {
+                            state_clone.lock().unwrap().server_connected
+                        };
+                        if connected {
+                            uploader::upload_file(&path, &state_clone, &tx_clone).await;
+                        } else {
+                            // Re-queue — will retry on next poll cycle
+                            let mut p = pending.lock().unwrap();
+                            p.insert(path, Instant::now());
+                        }
                     }
                 }
                 // Stop signal

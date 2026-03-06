@@ -75,7 +75,19 @@ impl ReplayApp {
         while let Ok(event) = rx.try_recv() {
             match event {
                 AppEvent::ServerConnected => {
-                    self.state.lock().unwrap().server_connected = true;
+                    let replay_dir = {
+                        let mut s = self.state.lock().unwrap();
+                        s.server_connected = true;
+                        s.replay_dir.clone()
+                    };
+                    // Auto-rescan to upload files that were skipped while offline
+                    if let Some(dir) = replay_dir {
+                        let state = self.state.clone();
+                        let tx = self.tx.clone();
+                        self.runtime.spawn(async move {
+                            uploader::scan_and_upload(&PathBuf::from(dir), &state, &tx).await;
+                        });
+                    }
                 }
                 AppEvent::ServerDisconnected => {
                     self.state.lock().unwrap().server_connected = false;
@@ -120,13 +132,23 @@ impl ReplayApp {
 
     // ── Status bar: single compact row ──────────────────────────────────
     fn render_status_bar(&self, ui: &mut egui::Ui) {
-        let s = self.state.lock().unwrap();
+        // Extract state up front so we don't hold the lock during rendering
+        let (server_connected, watcher_status, uploaded_count, replay_dir, is_scanning) = {
+            let s = self.state.lock().unwrap();
+            (
+                s.server_connected,
+                s.watcher_status.clone(),
+                s.uploaded_count,
+                s.replay_dir.clone(),
+                s.bulk_progress.is_some(),
+            )
+        };
 
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
 
             // Server status
-            let (server_color, server_text) = if s.server_connected {
+            let (server_color, server_text) = if server_connected {
                 (GREEN, "Connected")
             } else {
                 (RED, "Disconnected")
@@ -138,7 +160,7 @@ impl ReplayApp {
             ui.add_space(16.0);
 
             // Watcher status
-            let (watcher_color, watcher_text) = match &s.watcher_status {
+            let (watcher_color, watcher_text) = match &watcher_status {
                 WatcherStatus::Watching => (GREEN, "Watching".to_string()),
                 WatcherStatus::Stopped => (AMBER, "Stopped".to_string()),
                 WatcherStatus::Error(e) => (RED, format!("Error: {}", e)),
@@ -147,14 +169,36 @@ impl ReplayApp {
             ui.label(egui::RichText::new("Watcher:").size(12.0).color(TEXT_DIM));
             ui.label(egui::RichText::new(watcher_text).size(12.0).color(TEXT_BODY));
 
-            // Upload count (right-aligned)
+            // Right side: Rescan button + upload count
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} uploaded", s.uploaded_count))
+                    egui::RichText::new(format!("{} uploaded", uploaded_count))
                         .size(12.0)
                         .color(TEXT_SECONDARY),
                 );
                 Self::status_dot(ui, GREEN);
+
+                ui.add_space(12.0);
+
+                // Rescan button — disabled if disconnected, no replay dir, or already scanning
+                let can_rescan = replay_dir.is_some() && server_connected && !is_scanning;
+                let btn = ui.add_enabled(
+                    can_rescan,
+                    egui::Button::new(
+                        egui::RichText::new("Rescan").size(11.0).color(TEXT_BODY),
+                    )
+                    .fill(BORDER)
+                    .min_size(egui::vec2(50.0, 20.0)),
+                );
+                if btn.clicked() {
+                    if let Some(dir) = replay_dir {
+                        let state = self.state.clone();
+                        let tx = self.tx.clone();
+                        self.runtime.spawn(async move {
+                            uploader::scan_and_upload(&PathBuf::from(dir), &state, &tx).await;
+                        });
+                    }
+                }
             });
         });
     }
@@ -251,6 +295,7 @@ impl ReplayApp {
                                                 UploadStatus::Failed => RED,
                                                 UploadStatus::Pending => AMBER,
                                                 UploadStatus::Duplicate => ORANGE,
+                                                UploadStatus::Skipped => TEXT_DIM,
                                             };
                                             let (rect, _) = ui.allocate_exact_size(
                                                 egui::vec2(8.0, 8.0),

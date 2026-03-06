@@ -44,6 +44,15 @@ pub async fn upload_file(
         }
     }
 
+    // Skip if server is disconnected — don't burn retries
+    {
+        let s = state.lock().unwrap();
+        if !s.server_connected {
+            log(&format!("Skipped {} (server disconnected)", filename));
+            return UploadStatus::Skipped;
+        }
+    }
+
     let (server_url, auth_token) = {
         let s = state.lock().unwrap();
         (s.server_url.clone(), s.auth_token.clone())
@@ -177,6 +186,15 @@ pub async fn scan_and_upload(
     state: &SharedState,
     tx: &EventSender,
 ) {
+    // Don't scan if server is not connected
+    {
+        let s = state.lock().unwrap();
+        if !s.server_connected {
+            log("Scan skipped: server not connected");
+            return;
+        }
+    }
+
     let entries = match std::fs::read_dir(replay_dir) {
         Ok(e) => e,
         Err(e) => {
@@ -247,6 +265,11 @@ pub async fn scan_and_upload(
         match result {
             UploadStatus::Duplicate => duplicates += 1,
             UploadStatus::Failed => failed += 1,
+            UploadStatus::Skipped => {
+                // Server went offline mid-scan — stop trying
+                log("Server disconnected during scan, aborting remaining uploads");
+                break;
+            }
             _ => {}
         }
 
