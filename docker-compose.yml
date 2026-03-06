@@ -2,12 +2,12 @@ services:
   overlay:
     build: .
     ports:
-      - "${PORT:-3001}:${PORT:-3001}"
+      - "${PORT:-8080}:${PORT:-8080}"
     volumes:
       - overlay-data:/app/data
     environment:
       - TOON_HANDLE=${TOON_HANDLE}
-      - PORT=${PORT:-3001}
+      - PORT=${PORT:-8080}
       - REPLAY_DIR=/app/replays
       - AUTH_TOKEN=${AUTH_TOKEN:-}
       - GAME_MODE=${GAME_MODE:-Storm League}

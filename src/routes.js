@@ -81,6 +81,10 @@ router.get('/sessions', (req, res) => {
   res.json({ sessions, mode, player });
 });
 
+router.get('/health', (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
 router.get('/modes', (_req, res) => {
   res.json({ modes: db.getAvailableModes(), default: config.gameMode, labels: config.modeLabels });
 });

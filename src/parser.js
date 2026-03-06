@@ -57,7 +57,11 @@ function parseReplay(filePath) {
   return players.length > 0 ? players : null;
 }
 
-function scanAndParseAll(replayDir, onProgress) {
+function yieldToEventLoop() {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
+async function scanAndParseAll(replayDir, onProgress) {
   const files = fs.readdirSync(replayDir)
     .filter(f => f.endsWith('.StormReplay'));
 
@@ -80,6 +84,9 @@ function scanAndParseAll(replayDir, onProgress) {
 
     done++;
     if (onProgress) onProgress(done, toParse.length);
+
+    // Yield to the event loop every 5 files so HTTP health checks can respond
+    if (done % 5 === 0) await yieldToEventLoop();
   }
 
   return { total: files.length, newlyParsed: done, alreadyCached: files.length - toParse.length };

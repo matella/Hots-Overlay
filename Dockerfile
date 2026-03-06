@@ -19,6 +19,12 @@ COPY public/ ./public/
 
 RUN mkdir -p /app/data /app/replays
 
-EXPOSE 3001
+# Default env vars for Docker (override via Azure App Settings or docker-compose)
+ENV PORT=8080
+ENV REPLAY_DIR=/app/replays
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -qO- http://localhost:8080/api/health || exit 1
 
 CMD ["node", "server.js"]

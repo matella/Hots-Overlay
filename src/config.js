@@ -11,15 +11,14 @@ for (const [key, val] of Object.entries(process.env)) {
 const config = Object.freeze({
   replayDir: process.env.REPLAY_DIR,
   toonHandle: process.env.TOON_HANDLE,
-  port: parseInt(process.env.PORT, 10) || 3000,
+  port: parseInt(process.env.WEBSITES_PORT || process.env.PORT, 10) || 8080,
   dbPath: path.resolve(process.env.DB_PATH || './data/overlay.db'),
   gameMode: process.env.GAME_MODE || 'Storm League',
   authToken: process.env.AUTH_TOKEN || null,
   modeLabels,
 });
 
-for (const key of ['replayDir', 'toonHandle']) {
-  if (!config[key]) throw new Error(`Missing required env var for config.${key}. Check your .env file.`);
-}
+if (!config.replayDir) throw new Error('Missing required env var REPLAY_DIR. Check your .env file.');
+if (!config.toonHandle) console.warn('Warning: TOON_HANDLE not set. Use ?player= URL param to specify a player.');
 
 module.exports = config;
