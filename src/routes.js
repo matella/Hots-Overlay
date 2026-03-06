@@ -28,9 +28,18 @@ function resolveMode(query) {
   return match || mode;
 }
 
+function resolvePlayer(query) {
+  const player = query.player;
+  if (!player) return config.toonHandle;
+  const resolved = db.resolveToonHandle(player);
+  return resolved || player;
+}
+
 function formatGame(row) {
   return {
     id: row.id,
+    toonHandle: row.toon_handle,
+    playerName: row.player_name,
     gameDate: row.game_date,
     map: row.map,
     gameMode: row.game_mode,
@@ -43,34 +52,41 @@ function formatGame(row) {
 }
 
 router.get('/today', (req, res) => {
+  const player = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
-  const games = db.getTodayGames(mode);
+  const games = db.getTodayGames(player, mode);
   const stats = db.computeStats(games);
-  res.json({ games: games.map(formatGame), stats, mode });
+  res.json({ games: games.map(formatGame), stats, mode, player });
 });
 
 router.get('/session/:date', (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.date)) {
     return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
   }
+  const player = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
-  const rawGames = db.getSessionGames(req.params.date, mode);
+  const rawGames = db.getSessionGames(player, req.params.date, mode);
   const stats = db.computeStats(rawGames);
-  res.json({ date: req.params.date, games: rawGames.map(formatGame), stats, mode });
+  res.json({ date: req.params.date, games: rawGames.map(formatGame), stats, mode, player });
 });
 
 router.get('/sessions', (req, res) => {
+  const player = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
-  const sessions = db.getRecentSessions(limit, mode).map(session => ({
+  const sessions = db.getRecentSessions(player, limit, mode).map(session => ({
     ...session,
     games: session.games.map(formatGame),
   }));
-  res.json({ sessions, mode });
+  res.json({ sessions, mode, player });
 });
 
 router.get('/modes', (_req, res) => {
   res.json({ modes: db.getAvailableModes(), default: config.gameMode, labels: config.modeLabels });
+});
+
+router.get('/players', (_req, res) => {
+  res.json({ players: db.getAvailablePlayers(), default: config.toonHandle });
 });
 
 function checkAuth(req, res, next) {
@@ -97,28 +113,34 @@ router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
   fs.renameSync(req.file.path, dest);
 
   // Parse immediately instead of relying on the file watcher
-  const parsed = parseReplay(dest);
-  if (!parsed) {
+  const parsedPlayers = parseReplay(dest);
+  if (!parsedPlayers) {
     db.markFileProcessed(filename);
     return res.json({ status: 'ok', filename, parsed: false });
   }
 
-  db.insertReplay(parsed);
+  for (const playerData of parsedPlayers) {
+    db.insertReplay(playerData);
+  }
   db.markFileProcessed(filename);
 
-  broadcast({
-    type: 'new_game',
-    game: {
-      gameDate: parsed.gameDate,
-      map: parsed.map,
-      gameMode: parsed.gameMode,
-      hero: parsed.hero,
-      heroShort: parsed.heroShort,
-      heroImage: getHeroImageUrl(parsed.hero),
-      win: Boolean(parsed.win),
-      duration: parsed.duration,
-    },
-  });
+  for (const p of parsedPlayers) {
+    broadcast({
+      type: 'new_game',
+      game: {
+        toonHandle: p.toonHandle,
+        playerName: p.playerName,
+        gameDate: p.gameDate,
+        map: p.map,
+        gameMode: p.gameMode,
+        hero: p.hero,
+        heroShort: p.heroShort,
+        heroImage: getHeroImageUrl(p.hero),
+        win: Boolean(p.win),
+        duration: p.duration,
+      },
+    });
+  }
 
   res.json({ status: 'ok', filename, parsed: true });
 });

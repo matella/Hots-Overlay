@@ -29,22 +29,32 @@ function parseReplay(filePath) {
 
   if (result.status !== Parser.ReplayStatus.OK) return null;
 
-  const player = result.players[config.toonHandle];
-  if (!player || !player.hero) return null;
+  const gameDate = result.match.date instanceof Date
+    ? result.match.date.toISOString()
+    : String(result.match.date);
+  const map = result.match.map;
+  const gameMode = GAME_MODE_STRINGS[result.match.mode] || 'Unknown';
+  const duration = result.match.length || null;
 
-  return {
-    filename,
-    gameDate: result.match.date instanceof Date
-      ? result.match.date.toISOString()
-      : String(result.match.date),
-    map: result.match.map,
-    gameMode: GAME_MODE_STRINGS[result.match.mode] || 'Unknown',
-    hero: player.hero,
-    heroShort: normalizeHeroName(player.hero),
-    win: player.win ? 1 : 0,
-    duration: result.match.length || null,
-    playerName: player.name,
-  };
+  const players = [];
+  for (const [toonHandle, player] of Object.entries(result.players)) {
+    if (!player || !player.hero) continue;
+
+    players.push({
+      filename,
+      toonHandle,
+      gameDate,
+      map,
+      gameMode,
+      hero: player.hero,
+      heroShort: normalizeHeroName(player.hero),
+      win: player.win ? 1 : 0,
+      duration,
+      playerName: player.name,
+    });
+  }
+
+  return players.length > 0 ? players : null;
 }
 
 function scanAndParseAll(replayDir, onProgress) {
@@ -57,8 +67,12 @@ function scanAndParseAll(replayDir, onProgress) {
   let done = 0;
   for (const file of toParse) {
     try {
-      const result = parseReplay(path.join(replayDir, file));
-      if (result) db.insertReplay(result);
+      const results = parseReplay(path.join(replayDir, file));
+      if (results) {
+        for (const playerData of results) {
+          db.insertReplay(playerData);
+        }
+      }
       db.markFileProcessed(file);
     } catch (err) {
       console.error(`Failed to process ${file}:`, err.message);

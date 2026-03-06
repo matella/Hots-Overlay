@@ -3,6 +3,8 @@
   const ALL_MODES = 'all';
 
   let currentMode = null;
+  let currentPlayer = null;   // from ?player= URL param (null = server default)
+  let resolvedPlayer = null;  // toon handle resolved by server
   let modeLabels = {};
   let showBadges = false;
 
@@ -60,14 +62,17 @@
   }
 
   async function fetchToday() {
-    const param = currentMode === ALL_MODES ? `?mode=${ALL_MODES}` : `?mode=${encodeURIComponent(currentMode)}`;
-    const res = await fetch(`/api/today${param}`);
+    const params = new URLSearchParams();
+    params.set('mode', currentMode === ALL_MODES ? ALL_MODES : currentMode);
+    if (currentPlayer) params.set('player', currentPlayer);
+    const res = await fetch(`/api/today?${params.toString()}`);
     return res.json();
   }
 
   async function refreshOverlay() {
     try {
-      const { games, stats } = await fetchToday();
+      const { games, stats, player } = await fetchToday();
+      resolvedPlayer = player;
       showBadges = (currentMode === ALL_MODES);
       renderGames(games);
       updateStats(stats);
@@ -84,10 +89,15 @@
       const data = JSON.parse(e.data);
       if (data.type === 'new_game') {
         const game = data.game;
-        if (currentMode === ALL_MODES || game.gameMode === currentMode) {
-          addGame(game);
-          fetchToday().then(({ stats }) => updateStats(stats)).catch(() => {});
-        }
+
+        // Filter by player
+        if (resolvedPlayer && game.toonHandle !== resolvedPlayer) return;
+
+        // Filter by mode
+        if (currentMode !== ALL_MODES && game.gameMode !== currentMode) return;
+
+        addGame(game);
+        fetchToday().then(({ stats }) => updateStats(stats)).catch(() => {});
       }
     };
 
@@ -96,12 +106,15 @@
   }
 
   async function init() {
+    const params = new URLSearchParams(window.location.search);
+    currentPlayer = params.get('player') || null;
+
     try {
       const modesRes = await fetch('/api/modes');
       const modesData = await modesRes.json();
       modeLabels = modesData.labels || {};
 
-      const urlMode = new URLSearchParams(window.location.search).get('mode');
+      const urlMode = params.get('mode');
       if (urlMode) {
         if (urlMode.toLowerCase() === ALL_MODES) {
           currentMode = ALL_MODES;

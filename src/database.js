@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const config = require('./config');
 
-const REPLAY_COLUMNS = 'id, filename, game_date, map, game_mode, hero, hero_short, win, duration, player_name, created_at';
+const REPLAY_COLUMNS = 'id, filename, toon_handle, game_date, map, game_mode, hero, hero_short, win, duration, player_name, created_at';
 const ALL_MODES = 'all';
 
 let db;
@@ -46,10 +46,60 @@ function initDatabase() {
     );
   `);
 
+  // Migration: add toon_handle column (changes UNIQUE constraint to compound key)
+  const hasColumn = db.prepare(
+    "SELECT COUNT(*) as cnt FROM pragma_table_info('replays') WHERE name = 'toon_handle'"
+  ).get().cnt > 0;
+
+  if (!hasColumn) {
+    console.log('Migrating database: adding toon_handle column...');
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE replays_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          filename TEXT NOT NULL,
+          toon_handle TEXT NOT NULL,
+          game_date TEXT NOT NULL,
+          map TEXT NOT NULL,
+          game_mode TEXT NOT NULL,
+          hero TEXT NOT NULL,
+          hero_short TEXT NOT NULL,
+          win INTEGER NOT NULL CHECK(win IN (0, 1)),
+          duration INTEGER,
+          player_name TEXT,
+          created_at TEXT DEFAULT (datetime('now')),
+          UNIQUE(filename, toon_handle)
+        );
+      `);
+
+      db.prepare(`
+        INSERT INTO replays_new
+          (id, filename, toon_handle, game_date, map, game_mode, hero, hero_short, win, duration, player_name, created_at)
+        SELECT
+          id, filename, ?, game_date, map, game_mode, hero, hero_short, win, duration, player_name, created_at
+        FROM replays
+      `).run(config.toonHandle);
+
+      db.exec(`
+        DROP TABLE replays;
+        ALTER TABLE replays_new RENAME TO replays;
+        CREATE INDEX idx_replays_game_date ON replays(game_date);
+        CREATE INDEX idx_replays_game_mode ON replays(game_mode);
+        CREATE INDEX idx_replays_toon_handle ON replays(toon_handle);
+        CREATE INDEX idx_replays_player_name ON replays(player_name);
+      `);
+
+      // Clear processed files so replays get re-parsed for all players
+      db.exec('DELETE FROM processed_files');
+    });
+    migrate();
+    console.log('Migration complete. Replays will be re-parsed for all players.');
+  }
+
   stmts = {
     insert: db.prepare(`
-      INSERT OR IGNORE INTO replays (filename, game_date, map, game_mode, hero, hero_short, win, duration, player_name)
-      VALUES (@filename, @gameDate, @map, @gameMode, @hero, @heroShort, @win, @duration, @playerName)
+      INSERT OR IGNORE INTO replays (filename, toon_handle, game_date, map, game_mode, hero, hero_short, win, duration, player_name)
+      VALUES (@filename, @toonHandle, @gameDate, @map, @gameMode, @hero, @heroShort, @win, @duration, @playerName)
     `),
     getByFilename: db.prepare('SELECT filename FROM replays WHERE filename = ?'),
     allProcessed: db.prepare('SELECT filename FROM processed_files'),
@@ -58,33 +108,33 @@ function initDatabase() {
 
     todayByMode: db.prepare(`
       SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE date(game_date) = date('now', 'localtime') AND game_mode = ?
+      WHERE toon_handle = ? AND date(game_date) = date('now', 'localtime') AND game_mode = ?
       ORDER BY game_date ASC
     `),
     todayAll: db.prepare(`
       SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE date(game_date) = date('now', 'localtime')
+      WHERE toon_handle = ? AND date(game_date) = date('now', 'localtime')
       ORDER BY game_date ASC
     `),
 
     sessionByMode: db.prepare(`
       SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE date(game_date) = ? AND game_mode = ?
+      WHERE toon_handle = ? AND date(game_date) = ? AND game_mode = ?
       ORDER BY game_date ASC
     `),
     sessionAll: db.prepare(`
       SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE date(game_date) = ?
+      WHERE toon_handle = ? AND date(game_date) = ?
       ORDER BY game_date ASC
     `),
 
     recentByMode: db.prepare(`
       SELECT ${REPLAY_COLUMNS}, date(game_date) AS session_date
       FROM replays
-      WHERE game_mode = ?
+      WHERE toon_handle = ? AND game_mode = ?
         AND date(game_date) IN (
           SELECT DISTINCT date(game_date)
-          FROM replays WHERE game_mode = ?
+          FROM replays WHERE toon_handle = ? AND game_mode = ?
           ORDER BY date(game_date) DESC LIMIT ?
         )
       ORDER BY game_date ASC
@@ -92,16 +142,27 @@ function initDatabase() {
     recentAll: db.prepare(`
       SELECT ${REPLAY_COLUMNS}, date(game_date) AS session_date
       FROM replays
-      WHERE date(game_date) IN (
-        SELECT DISTINCT date(game_date)
-        FROM replays
-        ORDER BY date(game_date) DESC LIMIT ?
-      )
+      WHERE toon_handle = ?
+        AND date(game_date) IN (
+          SELECT DISTINCT date(game_date)
+          FROM replays WHERE toon_handle = ?
+          ORDER BY date(game_date) DESC LIMIT ?
+        )
       ORDER BY game_date ASC
     `),
 
     availableModes: db.prepare(`
       SELECT DISTINCT game_mode FROM replays ORDER BY game_mode
+    `),
+
+    resolveToonHandle: db.prepare(`
+      SELECT DISTINCT toon_handle FROM replays
+      WHERE toon_handle = ? OR player_name = ? COLLATE NOCASE
+      LIMIT 1
+    `),
+
+    availablePlayers: db.prepare(`
+      SELECT DISTINCT toon_handle, player_name FROM replays ORDER BY player_name
     `),
   };
 
@@ -128,22 +189,22 @@ function markFileProcessed(filename) {
   stmts.markProcessed.run(filename);
 }
 
-function getTodayGames(mode) {
+function getTodayGames(toonHandle, mode) {
   return mode === ALL_MODES
-    ? stmts.todayAll.all()
-    : stmts.todayByMode.all(mode);
+    ? stmts.todayAll.all(toonHandle)
+    : stmts.todayByMode.all(toonHandle, mode);
 }
 
-function getSessionGames(date, mode) {
+function getSessionGames(toonHandle, date, mode) {
   return mode === ALL_MODES
-    ? stmts.sessionAll.all(date)
-    : stmts.sessionByMode.all(date, mode);
+    ? stmts.sessionAll.all(toonHandle, date)
+    : stmts.sessionByMode.all(toonHandle, date, mode);
 }
 
-function getRecentSessions(limit, mode) {
+function getRecentSessions(toonHandle, limit, mode) {
   const rows = mode === ALL_MODES
-    ? stmts.recentAll.all(limit)
-    : stmts.recentByMode.all(mode, mode, limit);
+    ? stmts.recentAll.all(toonHandle, toonHandle, limit)
+    : stmts.recentByMode.all(toonHandle, mode, toonHandle, mode, limit);
 
   const sessionMap = new Map();
   for (const row of rows) {
@@ -162,6 +223,16 @@ function getAvailableModes() {
   return stmts.availableModes.all().map(r => r.game_mode);
 }
 
+function resolveToonHandle(playerQuery) {
+  if (!playerQuery) return null;
+  const row = stmts.resolveToonHandle.get(playerQuery, playerQuery);
+  return row ? row.toon_handle : null;
+}
+
+function getAvailablePlayers() {
+  return stmts.availablePlayers.all();
+}
+
 module.exports = {
   ALL_MODES,
   initDatabase,
@@ -175,4 +246,6 @@ module.exports = {
   getSessionGames,
   getRecentSessions,
   getAvailableModes,
+  resolveToonHandle,
+  getAvailablePlayers,
 };

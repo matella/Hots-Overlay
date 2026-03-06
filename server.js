@@ -44,29 +44,34 @@ server.listen(config.port, () => {
     const filename = path.basename(filePath);
     if (db.isFileProcessed(filename)) return;
 
-    const parsed = parseReplay(filePath);
-    if (!parsed) {
+    const parsedPlayers = parseReplay(filePath);
+    if (!parsedPlayers) {
       db.markFileProcessed(filename);
       return;
     }
 
-    db.insertReplay(parsed);
+    for (const playerData of parsedPlayers) {
+      db.insertReplay(playerData);
+    }
     db.markFileProcessed(filename);
 
-    // Broadcast to all clients - they filter by their active mode
-    broadcast({
-      type: 'new_game',
-      game: {
-        gameDate: parsed.gameDate,
-        map: parsed.map,
-        gameMode: parsed.gameMode,
-        hero: parsed.hero,
-        heroShort: parsed.heroShort,
-        heroImage: getHeroImageUrl(parsed.hero),
-        win: Boolean(parsed.win),
-        duration: parsed.duration,
-      },
-    });
+    for (const p of parsedPlayers) {
+      broadcast({
+        type: 'new_game',
+        game: {
+          toonHandle: p.toonHandle,
+          playerName: p.playerName,
+          gameDate: p.gameDate,
+          map: p.map,
+          gameMode: p.gameMode,
+          hero: p.hero,
+          heroShort: p.heroShort,
+          heroImage: getHeroImageUrl(p.hero),
+          win: Boolean(p.win),
+          duration: p.duration,
+        },
+      });
+    }
   });
 
   console.log('Watching for new replays...');
