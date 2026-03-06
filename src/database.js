@@ -51,6 +51,7 @@ function initDatabase() {
       INSERT OR IGNORE INTO replays (filename, game_date, map, game_mode, hero, hero_short, win, duration, player_name)
       VALUES (@filename, @gameDate, @map, @gameMode, @hero, @heroShort, @win, @duration, @playerName)
     `),
+    getByFilename: db.prepare('SELECT filename FROM replays WHERE filename = ?'),
     allProcessed: db.prepare('SELECT filename FROM processed_files'),
     isProcessed: db.prepare('SELECT 1 FROM processed_files WHERE filename = ?'),
     markProcessed: db.prepare('INSERT OR IGNORE INTO processed_files (filename) VALUES (?)'),
@@ -111,6 +112,10 @@ function insertReplay(data) {
   return stmts.insert.run(data);
 }
 
+function replayExists(filename) {
+  return !!stmts.getByFilename.get(filename);
+}
+
 function getAllProcessedFilenames() {
   return new Set(stmts.allProcessed.all().map(r => r.filename));
 }
@@ -162,6 +167,7 @@ module.exports = {
   initDatabase,
   computeStats,
   insertReplay,
+  replayExists,
   getAllProcessedFilenames,
   isFileProcessed,
   markFileProcessed,

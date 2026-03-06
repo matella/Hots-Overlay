@@ -86,6 +86,13 @@ router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
   }
 
   const filename = req.file.originalname;
+
+  // Check if this replay already exists in the database
+  if (db.replayExists(filename)) {
+    fs.unlinkSync(req.file.path); // clean up temp upload
+    return res.status(409).json({ status: 'duplicate', filename });
+  }
+
   const dest = path.join(config.replayDir, filename);
   fs.renameSync(req.file.path, dest);
 
