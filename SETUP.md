@@ -159,52 +159,47 @@ The SQLite database is stored in a Docker volume (`overlay-data`). Your game his
 
 #### Prerequisites
 
-- **Node.js** 18 or later on your PC
+- **Windows 10 or later**
 
 #### 1. Install the client
 
-```bash
-cd client
-npm install
-```
+Download the installer from the [latest release](https://github.com/matella/Hots-Overlay/releases/latest) and run it.
+
+The installer will:
+- Install the client to Program Files
+- Create a Start Menu shortcut
+- Optionally create a desktop shortcut
+- Optionally set the client to start with Windows
 
 #### 2. Configure the client
 
-```bash
-cp .env.example .env
-```
+Launch the client. On first run you'll see the settings panel. Configure:
 
-Edit `client/.env`:
+1. **Server URL** — the address of your overlay server (e.g. `http://your-server:3001`)
+2. **Replay Directory** — click **Browse** and navigate to your HotS replay folder:
+   ```
+   C:\Users\<you>\Documents\Heroes of the Storm\Accounts\<account>\<toon>\Replays\Multiplayer
+   ```
+3. **Auth Token** — must match the server's `AUTH_TOKEN` (leave empty if the server has no token set)
 
-```env
-REPLAY_DIR=C:\Users\<you>\Documents\Heroes of the Storm\Accounts\<account>\<toon>\Replays\Multiplayer
-SERVER_URL=http://your-server:3001
-AUTH_TOKEN=your-secret-token
-```
+Click **Save** to connect. The client will:
+- Verify the server connection (green "Connected" indicator)
+- Scan your replay folder and upload any new files
+- Start watching for new replays in real time
 
-> `AUTH_TOKEN` must match the server's `AUTH_TOKEN`.
+#### 3. How it works
 
-#### 3. Start the client
+- **System tray**: Minimizing the window hides it to the system tray. Click "Open Dashboard" in the tray menu to restore it.
+- **Auto-upload**: New `.StormReplay` files are detected and uploaded automatically (with a 5-second stabilization wait to ensure the file is fully written).
+- **Duplicate detection**: Files that have already been uploaded are skipped. The uploaded file list is stored in `%LOCALAPPDATA%\HotS Replay Client\uploaded.json`.
+- **Offline resilience**: If the server goes offline, uploads are paused and automatically retried when it comes back. You can also click the **Rescan** button to manually trigger a re-upload of any missed files.
+- **Activity log**: The dashboard shows recent upload activity with color-coded status dots:
+  - Green = uploaded successfully
+  - Orange = duplicate (already on server)
+  - Red = failed (hover for error details)
+  - Grey = skipped (server was offline)
 
-```bash
-npm start
-```
-
-On first run, the client uploads all existing replays to the server. This may take a while with many files. Uploaded filenames are tracked in `client/data/uploaded.json`, so subsequent starts only upload new files.
-
-You should see output like:
-
-```
-Server: http://your-server:3001
-Replays: C:\Users\matella\Documents\...
-Uploading 1991 new replays (0 already uploaded)...
-  50/1991
-  100/1991
-  ...
-Watching for new replays...
-```
-
-After the initial sync, the client watches for new replays and uploads them automatically.
+Settings are stored in `%LOCALAPPDATA%\HotS Replay Client\settings.json`.
 
 #### 4. Add to OBS
 
@@ -227,10 +222,10 @@ Same as the local setup, but use the remote server URL:
 | `better-sqlite3` install fails | Install Windows Build Tools (see above) |
 | Port already in use | Change `PORT` in `.env` |
 | Overlay shows wrong mode | Check the `?mode=` URL parameter |
-| Client upload fails (401) | `AUTH_TOKEN` in client `.env` must match server's |
-| Client upload fails (connection refused) | Check `SERVER_URL` and that the server is running |
+| Client shows "Disconnected" | Check the server URL in settings and that the server is running |
+| Client uploads show as "Skipped" | Server is offline — they'll auto-retry when it reconnects |
 | Docker container won't start | Run `docker compose logs` to see the error |
-| Want to re-upload all replays | Delete `client/data/uploaded.json` and restart the client |
+| Want to re-upload all replays | Delete `%LOCALAPPDATA%\HotS Replay Client\uploaded.json` and click Rescan |
 
 ## Project Structure
 
@@ -248,11 +243,22 @@ Overlay/
 │   ├── index.html           # Overlay HTML
 │   ├── css/overlay.css      # Styles
 │   └── js/overlay.js        # Frontend logic
-├── client/                  # Upload client (runs on your PC)
-│   ├── client.js            # Watches replays, uploads to server
-│   ├── package.json
-│   ├── .env.example
-│   └── data/uploaded.json   # Tracks uploaded files (created at runtime)
+├── client-rs/               # Native desktop client (Rust)
+│   ├── src/
+│   │   ├── main.rs          # Entry point, runtime setup
+│   │   ├── app.rs           # GUI (egui/eframe)
+│   │   ├── state.rs         # Shared state, events, types
+│   │   ├── uploader.rs      # HTTP upload logic
+│   │   ├── watcher.rs       # Filesystem watcher (notify)
+│   │   ├── settings.rs      # Settings persistence
+│   │   ├── tray.rs          # System tray icon
+│   │   └── win_utils.rs     # Windows API FFI (show/hide window)
+│   ├── assets/
+│   │   ├── icon.ico         # App icon (Windows)
+│   │   └── icon.png         # App icon (tray)
+│   ├── build.rs             # Build script (icon, env vars)
+│   ├── installer.iss        # Inno Setup installer script
+│   └── Cargo.toml           # Rust dependencies
 ├── data/
 │   └── overlay.db           # SQLite database (created at runtime)
 ├── Dockerfile               # Server container image

@@ -13,7 +13,7 @@ A real-time OBS overlay for Heroes of the Storm that displays your win/loss hist
 - Transparent background for OBS Browser Source
 - SQLite database to avoid re-parsing thousands of replay files
 - **Docker support** for remote deployment
-- **Upload client** to send replays from your PC to a remote server
+- **Native desktop client** (Rust) to upload replays from your PC to a remote server
 
 ## Preview
 
@@ -22,6 +22,23 @@ A real-time OBS overlay for Heroes of the Storm that displays your win/loss hist
 |  Storm League - 5W - 3L | 62.5%          |
 |  [W][W][L][W][L][W][W][L]                |
 +-------------------------------------------+
+```
+
+## Architecture
+
+```
+Your PC                          Remote Server (Docker)
+┌──────────────────┐             ┌──────────────────────┐
+│  HotS Replay     │  uploads    │  Node.js Server      │
+│  Client (Rust)   │ ─────────── │  - Replay parser     │
+│                  │   HTTP      │  - SQLite database    │
+│  Watches replay  │             │  - WebSocket updates  │
+│  folder, uploads │             │  - OBS overlay        │
+│  new .StormReplay│             │                      │
+│  files           │             │  http://server:3001   │
+└──────────────────┘             └──────────────────────┘
+                                          │
+                                   OBS Browser Source
 ```
 
 ## Quick Start (Local)
@@ -36,19 +53,25 @@ Then add `http://localhost:3001` as an OBS Browser Source (800x120, transparent 
 
 ## Quick Start (Docker + Remote)
 
+### Server
+
 ```bash
-# On the server
 cp .env.example .env   # Set TOON_HANDLE and optionally AUTH_TOKEN
 docker compose up -d
-
-# On your PC
-cd client
-npm install
-cp .env.example .env   # Set REPLAY_DIR, SERVER_URL, AUTH_TOKEN
-npm start
 ```
 
 OBS Browser Source points to `http://your-server:3001`.
+
+### Client (your gaming PC)
+
+Download the installer from the [latest release](https://github.com/matella/Hots-Overlay/releases/latest) and run it. The client is a lightweight native Windows app (~4 MB installer) with a system tray icon.
+
+On first launch, configure:
+- **Server URL** — e.g. `http://your-server:3001`
+- **Replay directory** — your HotS replay folder
+- **Auth token** — must match the server's `AUTH_TOKEN` (if set)
+
+The client automatically uploads existing replays on first run, then watches for new ones in real time. If the server goes offline, uploads are queued and retried automatically when it comes back.
 
 See [SETUP.md](SETUP.md) for detailed instructions.
 
@@ -88,16 +111,19 @@ Control the displayed mode via the `?mode=` URL parameter (case-insensitive):
 | `TZ` | No | Timezone for Docker (default: `America/New_York`) |
 | `MODE_LABEL_*` | No | Custom display labels (e.g. `MODE_LABEL_Custom=Scrims`) |
 
-### Client (`client/.env`)
+### Client
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `REPLAY_DIR` | Yes | Path to your local HotS replay folder |
-| `SERVER_URL` | Yes | URL of the overlay server |
-| `AUTH_TOKEN` | No | Must match server's `AUTH_TOKEN` |
+The client stores settings in `%LOCALAPPDATA%\HotS Replay Client\settings.json`. Configuration is done through the GUI — no `.env` file needed.
+
+| Setting | Description |
+|---------|-------------|
+| Server URL | URL of the overlay server (e.g. `http://your-server:3001`) |
+| Replay directory | Path to your local HotS replay folder |
+| Auth token | Must match server's `AUTH_TOKEN` (if set) |
 
 ## Tech Stack
 
+### Server
 - **Runtime**: Node.js
 - **Replay parsing**: [hots-parser](https://github.com/ebshimizu/hots-parser)
 - **Database**: SQLite via better-sqlite3
@@ -107,3 +133,11 @@ Control the displayed mode via the `?mode=` URL parameter (case-insensitive):
 - **Frontend**: Vanilla HTML/CSS/JS
 - **Hero images**: GitHub CDN (heroespatchnotes/heroes-talents)
 - **Containerization**: Docker
+
+### Desktop Client
+- **Language**: Rust
+- **GUI**: egui/eframe
+- **File watching**: notify (cross-platform FS events)
+- **HTTP**: reqwest (multipart uploads)
+- **System tray**: tray-icon
+- **Installer**: Inno Setup
