@@ -168,21 +168,31 @@ router.post('/upload-debug', rawBodyDebug, (req, res) => {
 });
 
 // Raw binary upload (for the Rust client — avoids multipart/busboy issues with proxies)
-const rawBody = express.raw({ type: 'application/octet-stream', limit: '10mb' });
-router.post('/upload-raw', checkAuth, rawBody, (req, res) => {
+// Collect raw body from stream to avoid express.raw() middleware issues with proxies
+router.post('/upload-raw', checkAuth, (req, res) => {
   const filename = req.headers['x-filename'];
   if (!filename || !filename.endsWith('.StormReplay')) {
     return res.status(400).json({ error: 'Missing or invalid X-Filename header.' });
   }
-  if (!req.body || !req.body.length) {
-    return res.status(400).json({ error: 'Empty request body.' });
-  }
 
-  console.log(`[upload-raw] ${filename}: received ${req.body.length} bytes, content-type=${req.headers['content-type']}, transfer-encoding=${req.headers['transfer-encoding'] || 'none'}`);
+  const chunks = [];
+  req.on('data', chunk => chunks.push(chunk));
+  req.on('end', () => {
+    const body = Buffer.concat(chunks);
+    if (!body.length) {
+      return res.status(400).json({ error: 'Empty request body.' });
+    }
 
-  const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
-  fs.writeFileSync(tempPath, req.body);
-  processReplayFile(filename, tempPath, res);
+    console.log(`[upload-raw] ${filename}: received ${body.length} bytes, content-type=${req.headers['content-type']}`);
+
+    const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
+    fs.writeFileSync(tempPath, body);
+    processReplayFile(filename, tempPath, res);
+  });
+  req.on('error', err => {
+    console.error(`[upload-raw] Stream error for ${filename}:`, err.message);
+    res.status(500).json({ error: 'Upload stream error.' });
+  });
 });
 
 module.exports = router;
