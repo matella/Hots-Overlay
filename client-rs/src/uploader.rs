@@ -1,9 +1,7 @@
 use crate::settings;
 use crate::state::{AppEvent, BulkProgress, EventSender, SharedState, UploadStatus};
-use sha2::{Sha256, Digest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::fs;
 use tokio::time::sleep;
 
 /// Append a line to the log file in the app data directory
@@ -68,62 +66,51 @@ pub async fn upload_file(
         filename: filename.clone(),
     });
 
-    let url = format!("{}/api/upload", server_url.trim_end_matches('/'));
+    let url = format!("{}/api/upload-raw", server_url.trim_end_matches('/'));
     log(&format!("Uploading {} to {} (auth: {})", filename, url, if auth_token.is_some() { "yes" } else { "no" }));
 
-    // Read file
-    let file_bytes = match fs::read(file_path).await {
-        Ok(b) => b,
-        Err(e) => {
-            let err_msg = format!("Failed to read file: {}", e);
-            eprintln!("Failed to read {}: {}", file_path.display(), e);
-            let mut s = state.lock().unwrap();
-            s.update_recent_with_error(&filename, UploadStatus::Failed, err_msg.clone());
-            s.request_repaint();
-            let _ = tx.send(AppEvent::UploadFailed {
-                filename: filename.clone(),
-                error: err_msg,
-            });
-            return UploadStatus::Failed;
-        }
-    };
-
-    // Log file hash for debugging
-    let hash = {
-        let mut hasher = Sha256::new();
-        hasher.update(&file_bytes);
-        format!("{:x}", hasher.finalize())
-    };
-    log(&format!("  {} bytes read, sha256={}", file_bytes.len(), hash));
-
-    let client = reqwest::Client::builder()
-        .http1_only()
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let file_path_owned = file_path.to_path_buf();
     let mut last_err = String::new();
 
     for attempt in 1..=MAX_RETRIES {
-        // Use multipart/form-data — most reliable through Azure proxies
-        let part = reqwest::multipart::Part::bytes(file_bytes.clone())
-            .file_name(filename.clone())
-            .mime_str("application/octet-stream")
-            .unwrap();
-        let form = reqwest::multipart::Form::new().part("replay", part);
+        // Use ureq (blocking HTTP) — reqwest's async streaming gets corrupted by Azure ARR proxy
+        let url_c = url.clone();
+        let filename_c = filename.clone();
+        let auth_c = auth_token.clone();
+        let path_c = file_path_owned.clone();
 
-        let mut req = client
-            .post(&url)
-            .multipart(form);
+        let result = tokio::task::spawn_blocking(move || -> Result<(u16, String), String> {
+            let file_bytes = std::fs::read(&path_c)
+                .map_err(|e| format!("Read error: {}", e))?;
 
-        if let Some(ref token) = auth_token {
-            req = req.bearer_auth(token);
-        }
+            let mut req = ureq::post(&url_c)
+                .header("Content-Type", "application/octet-stream")
+                .header("X-Filename", &filename_c);
 
-        match req.send().await {
-            Ok(resp) => {
-                let status_code = resp.status().as_u16();
+            if let Some(ref token) = auth_c {
+                req = req.header("Authorization", &format!("Bearer {}", token));
+            }
+
+            // send(&[u8]) uses Content-Length (no chunked encoding)
+            match req.send(&file_bytes) {
+                Ok(mut resp) => {
+                    let status = resp.status().as_u16();
+                    let body = resp.body_mut().read_to_string()
+                        .unwrap_or_default();
+                    Ok((status, body))
+                }
+                Err(ureq::Error::StatusCode(code)) => {
+                    Ok((code, format!("HTTP error {}", code)))
+                }
+                Err(e) => Err(format!("Network error: {}", e)),
+            }
+        }).await;
+
+        match result {
+            Ok(Ok((status_code, body))) => {
+                log(&format!("  response: HTTP {} body={}", status_code, &body[..body.len().min(200)]));
 
                 if status_code == 409 {
-                    // Duplicate
                     let mut s = state.lock().unwrap();
                     s.uploaded.insert(filename.clone());
                     s.uploaded_count = s.uploaded.len();
@@ -137,8 +124,7 @@ pub async fn upload_file(
                     return UploadStatus::Duplicate;
                 }
 
-                if resp.status().is_success() {
-                    let body = resp.text().await.unwrap_or_default();
+                if (200..300).contains(&status_code) {
                     log(&format!("Uploaded: {} -> {}", filename, body));
                     let mut s = state.lock().unwrap();
                     s.uploaded.insert(filename.clone());
@@ -152,28 +138,21 @@ pub async fn upload_file(
                     return UploadStatus::Success;
                 }
 
-                let text = resp
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "unknown".to_string());
-                last_err = format!("HTTP {}: {}", status_code, text);
+                last_err = format!("HTTP {}: {}", status_code, body);
                 log(&format!("Upload attempt {}/{} for {} failed: {}", attempt, MAX_RETRIES, filename, last_err));
             }
+            Ok(Err(e)) => {
+                last_err = e.clone();
+                log(&format!("Upload attempt {}/{} for {} error: {}", attempt, MAX_RETRIES, filename, e));
+            }
             Err(e) => {
-                last_err = e.to_string();
-                log(&format!("Upload attempt {}/{} for {} network error: {}", attempt, MAX_RETRIES, filename, last_err));
+                last_err = format!("Task error: {}", e);
+                log(&format!("Upload attempt {}/{} for {} error: {}", attempt, MAX_RETRIES, filename, last_err));
             }
         }
 
         if attempt < MAX_RETRIES {
             let delay = Duration::from_secs((attempt * 2) as u64);
-            eprintln!(
-                "Upload failed (attempt {}/{}): {} - retrying in {}s...",
-                attempt,
-                MAX_RETRIES,
-                filename,
-                delay.as_secs()
-            );
             sleep(delay).await;
         }
     }
