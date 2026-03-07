@@ -121,7 +121,8 @@ pub async fn upload_file(
                 }
 
                 if resp.status().is_success() {
-                    // Success
+                    let body = resp.text().await.unwrap_or_default();
+                    log(&format!("Uploaded: {} -> {}", filename, body));
                     let mut s = state.lock().unwrap();
                     s.uploaded.insert(filename.clone());
                     s.uploaded_count = s.uploaded.len();
@@ -131,7 +132,6 @@ pub async fn upload_file(
                     let _ = tx.send(AppEvent::UploadSuccess {
                         filename: filename.clone(),
                     });
-                    log(&format!("Uploaded: {}", filename));
                     return UploadStatus::Success;
                 }
 

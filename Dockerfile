@@ -1,15 +1,18 @@
-FROM node:18-alpine AS build
+FROM node:18-slim AS build
 WORKDIR /app
 
 # better-sqlite3 needs build tools for native compilation
-RUN apk add --no-cache python3 make g++
+RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 RUN npm ci --omit=dev
 
 # --- Production stage (no build tools) ---
-FROM node:18-alpine
+FROM node:18-slim
 WORKDIR /app
+
+# wget for health check
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/node_modules ./node_modules
 COPY package*.json ./
