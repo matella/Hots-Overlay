@@ -273,6 +273,20 @@ router.post('/upload-raw', checkAuth, (req, res) => {
     const bodyHash = crypto.createHash('sha256').update(body).digest('hex');
     console.log(`[upload-raw] ${filename}: received ${body.length} bytes, magic=${magic}, chunks=${chunks.length}, sha256=${bodyHash}`);
 
+    // Verify integrity: compare client hash with received body hash
+    const clientHash = req.headers['x-content-sha256'];
+    if (clientHash && clientHash !== bodyHash) {
+      console.error(`[upload-raw] ${filename}: HASH MISMATCH — client sent ${clientHash}, server got ${bodyHash}`);
+      return res.status(422).json({
+        error: 'Hash mismatch — data corrupted in transit',
+        clientHash,
+        serverHash: bodyHash,
+      });
+    }
+    if (clientHash) {
+      console.log(`[upload-raw] ${filename}: hash verified OK (${clientHash})`);
+    }
+
     // Write to temp file
     const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
     try {

@@ -1,5 +1,6 @@
 use crate::settings;
 use crate::state::{AppEvent, BulkProgress, EventSender, SharedState, UploadStatus};
+use sha2::{Sha256, Digest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::fs;
@@ -19,7 +20,7 @@ fn log(msg: &str) {
     }
 }
 
-const MAX_RETRIES: u32 = 3;
+const MAX_RETRIES: u32 = 5;
 const CONNECTIVITY_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECTIVITY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -87,7 +88,18 @@ pub async fn upload_file(
         }
     };
 
-    let client = reqwest::Client::new();
+    // Log file hash for debugging
+    let hash = {
+        let mut hasher = Sha256::new();
+        hasher.update(&file_bytes);
+        format!("{:x}", hasher.finalize())
+    };
+    log(&format!("  {} bytes read, sha256={}", file_bytes.len(), hash));
+
+    let client = reqwest::Client::builder()
+        .http1_only()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     let mut last_err = String::new();
 
     for attempt in 1..=MAX_RETRIES {
@@ -96,6 +108,7 @@ pub async fn upload_file(
             .header("Content-Type", "application/octet-stream")
             .header("Content-Length", file_bytes.len().to_string())
             .header("X-Filename", &filename)
+            .header("X-Content-SHA256", &hash)
             .body(file_bytes.clone());
 
         if let Some(ref token) = auth_token {
@@ -105,6 +118,18 @@ pub async fn upload_file(
         match req.send().await {
             Ok(resp) => {
                 let status_code = resp.status().as_u16();
+
+                if status_code == 422 {
+                    // Hash mismatch — data corrupted in transit, retry
+                    let text = resp.text().await.unwrap_or_default();
+                    last_err = format!("Hash mismatch (corrupted in transit): {}", text);
+                    log(&format!("Upload attempt {}/{} for {} HASH MISMATCH: {}", attempt, MAX_RETRIES, filename, last_err));
+                    if attempt < MAX_RETRIES {
+                        let delay = Duration::from_secs((attempt * 2) as u64);
+                        sleep(delay).await;
+                    }
+                    continue;
+                }
 
                 if status_code == 409 {
                     // Duplicate

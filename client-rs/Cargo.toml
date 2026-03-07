@@ -1,6 +1,6 @@
 [package]
 name = "hots-replay-client"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 description = "Heroes of the Storm replay uploader"
 license = "MIT"
@@ -19,6 +19,7 @@ rfd = "0.15"
 dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 image = "0.25"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"
