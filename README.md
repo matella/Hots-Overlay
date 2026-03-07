@@ -58,42 +58,42 @@ Add a **Browser Source** in OBS with the following settings:
 - **Custom CSS**: leave empty
 - Check **"Shutdown source when not visible"** (optional)
 
-Use one of these URLs depending on what you want to display (replace `your-server` with your actual server address):
+Use one of these URLs depending on what you want to display:
 
 ### Today's games (default)
 
 Shows wins and losses from today's session:
 ```
-https://your-server.example.com
+https://hots-overlay.azurewebsites.net
 ```
 
 ### Today's games for a specific mode
 
 ```
-https://your-server.example.com?mode=storm+league
-https://your-server.example.com?mode=custom
-https://your-server.example.com?mode=all
+https://hots-overlay.azurewebsites.net?mode=storm+league
+https://hots-overlay.azurewebsites.net?mode=custom
+https://hots-overlay.azurewebsites.net?mode=all
 ```
 
 ### Recent games (last 10)
 
 Shows your last 10 games regardless of date:
 ```
-https://your-server.example.com?view=recent
+https://hots-overlay.azurewebsites.net?view=recent
 ```
 
 ### Recent games for a specific mode
 
 ```
-https://your-server.example.com?view=recent&mode=storm+league
+https://hots-overlay.azurewebsites.net?view=recent&mode=storm+league
 ```
 
 ### Specific player
 
 If your server tracks multiple players, specify which one:
 ```
-https://your-server.example.com?player=matella
-https://your-server.example.com?player=2-Hero-1-2844614
+https://hots-overlay.azurewebsites.net?player=matella
+https://hots-overlay.azurewebsites.net?player=2-Hero-1-2844614
 ```
 
 ### URL Parameters Reference
