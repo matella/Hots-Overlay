@@ -249,70 +249,62 @@ router.get('/file-hash/:filename', checkAuth, (req, res) => {
   res.json({ filename: req.params.filename, size: data.length, sha256: hash, first16hex: magic });
 });
 
-// Raw binary upload (for the Rust client — avoids multipart/busboy issues with proxies)
-router.post('/upload-raw', checkAuth, (req, res) => {
+// Raw binary upload (for the Rust client)
+// Uses express.raw() middleware instead of manual stream collection for reliable body handling
+const rawUploadParser = express.raw({ type: '*/*', limit: '10mb' });
+router.post('/upload-raw', checkAuth, rawUploadParser, (req, res) => {
   const filename = req.headers['x-filename'];
   if (!filename || !filename.endsWith('.StormReplay')) {
     return res.status(400).json({ error: 'Missing or invalid X-Filename header.' });
   }
 
-  console.log(`[upload-raw] ${filename}: starting stream collection, content-length=${req.headers['content-length']}, content-type=${req.headers['content-type']}`);
+  const rawBody = req.body;
+  if (!rawBody || !rawBody.length) {
+    console.warn(`[upload-raw] ${filename}: empty body received`);
+    return res.status(400).json({ error: 'Empty request body.' });
+  }
 
-  const chunks = [];
-  req.on('data', chunk => {
-    chunks.push(chunk);
-  });
-  req.on('end', () => {
-    const rawBody = Buffer.concat(chunks);
-    if (!rawBody.length) {
-      console.warn(`[upload-raw] ${filename}: empty body received`);
-      return res.status(400).json({ error: 'Empty request body.' });
-    }
+  console.log(`[upload-raw] ${filename}: received rawBody ${rawBody.length} bytes, content-type=${req.headers['content-type']}`);
 
-    // Decode base64 if the client sent encoded data (to bypass Azure ARR proxy corruption)
-    let body;
-    if (req.headers['x-content-encoding'] === 'base64') {
-      body = Buffer.from(rawBody.toString('utf-8'), 'base64');
-      console.log(`[upload-raw] ${filename}: decoded base64: ${rawBody.length} chars -> ${body.length} bytes`);
-    } else {
-      body = rawBody;
-    }
+  // Decode base64 if the client sent encoded data (to bypass Azure proxy corruption)
+  let body;
+  if (req.headers['x-content-encoding'] === 'base64') {
+    body = Buffer.from(rawBody.toString('utf-8'), 'base64');
+    console.log(`[upload-raw] ${filename}: decoded base64: ${rawBody.length} chars -> ${body.length} bytes`);
+  } else {
+    body = rawBody;
+  }
 
-    const magic = body.slice(0, 4).toString('hex');
-    const bodyHash = crypto.createHash('sha256').update(body).digest('hex');
-    console.log(`[upload-raw] ${filename}: received ${body.length} bytes, magic=${magic}, chunks=${chunks.length}, sha256=${bodyHash}`);
+  const magic = body.slice(0, 4).toString('hex');
+  const bodyHash = crypto.createHash('sha256').update(body).digest('hex');
+  console.log(`[upload-raw] ${filename}: ${body.length} bytes, magic=${magic}, sha256=${bodyHash}`);
 
-    // Verify integrity: compare client hash with received body hash
-    const clientHash = req.headers['x-content-sha256'];
-    if (clientHash && clientHash !== bodyHash) {
-      console.error(`[upload-raw] ${filename}: HASH MISMATCH — client sent ${clientHash}, server got ${bodyHash}`);
-      return res.status(422).json({
-        error: 'Hash mismatch — data corrupted in transit',
-        clientHash,
-        serverHash: bodyHash,
-      });
-    }
-    if (clientHash) {
-      console.log(`[upload-raw] ${filename}: hash verified OK (${clientHash})`);
-    }
+  // Verify integrity: compare client hash with received body hash
+  const clientHash = req.headers['x-content-sha256'];
+  if (clientHash && clientHash !== bodyHash) {
+    console.error(`[upload-raw] ${filename}: HASH MISMATCH — client sent ${clientHash}, server got ${bodyHash}`);
+    return res.status(422).json({
+      error: 'Hash mismatch — data corrupted in transit',
+      clientHash,
+      serverHash: bodyHash,
+    });
+  }
+  if (clientHash) {
+    console.log(`[upload-raw] ${filename}: hash verified OK (${clientHash})`);
+  }
 
-    // Write to temp file
-    const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
-    try {
-      fs.writeFileSync(tempPath, body);
-      const writtenSize = fs.statSync(tempPath).size;
-      console.log(`[upload-raw] ${filename}: wrote ${writtenSize} bytes to ${tempPath}`);
-    } catch (err) {
-      console.error(`[upload-raw] ${filename}: write failed: ${err.message}`);
-      return res.status(500).json({ error: `File write failed: ${err.message}` });
-    }
+  // Write to temp file
+  const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
+  try {
+    fs.writeFileSync(tempPath, body);
+    const writtenSize = fs.statSync(tempPath).size;
+    console.log(`[upload-raw] ${filename}: wrote ${writtenSize} bytes to ${tempPath}`);
+  } catch (err) {
+    console.error(`[upload-raw] ${filename}: write failed: ${err.message}`);
+    return res.status(500).json({ error: `File write failed: ${err.message}` });
+  }
 
-    processReplayFile(filename, tempPath, res, bodyHash);
-  });
-  req.on('error', err => {
-    console.error(`[upload-raw] Stream error for ${filename}:`, err.message);
-    res.status(500).json({ error: 'Upload stream error.' });
-  });
+  processReplayFile(filename, tempPath, res, bodyHash);
 });
 
 module.exports = router;
