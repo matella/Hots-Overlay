@@ -2125,6 +2125,7 @@ dependencies = [
 name = "hots-replay-client"
 version = "2.3.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "dirs",
  "eframe",

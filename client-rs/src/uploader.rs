@@ -1,5 +1,6 @@
 use crate::settings;
 use crate::state::{AppEvent, BulkProgress, EventSender, SharedState, UploadStatus};
+use base64::{Engine as _, engine::general_purpose};
 use sha2::{Sha256, Digest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -96,6 +97,10 @@ pub async fn upload_file(
     };
     log(&format!("  {} bytes read, sha256={}", file_bytes.len(), hash));
 
+    // Base64-encode the body to prevent Azure ARR proxy from corrupting binary data
+    let encoded_body = general_purpose::STANDARD.encode(&file_bytes);
+    log(&format!("  base64 encoded: {} bytes -> {} chars", file_bytes.len(), encoded_body.len()));
+
     let client = reqwest::Client::builder()
         .http1_only()
         .build()
@@ -105,11 +110,11 @@ pub async fn upload_file(
     for attempt in 1..=MAX_RETRIES {
         let mut req = client
             .post(&url)
-            .header("Content-Type", "application/octet-stream")
-            .header("Content-Length", file_bytes.len().to_string())
+            .header("Content-Type", "text/plain")
             .header("X-Filename", &filename)
             .header("X-Content-SHA256", &hash)
-            .body(file_bytes.clone());
+            .header("X-Content-Encoding", "base64")
+            .body(encoded_body.clone());
 
         if let Some(ref token) = auth_token {
             req = req.bearer_auth(token);

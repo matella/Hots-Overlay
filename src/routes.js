@@ -263,10 +263,19 @@ router.post('/upload-raw', checkAuth, (req, res) => {
     chunks.push(chunk);
   });
   req.on('end', () => {
-    const body = Buffer.concat(chunks);
-    if (!body.length) {
+    const rawBody = Buffer.concat(chunks);
+    if (!rawBody.length) {
       console.warn(`[upload-raw] ${filename}: empty body received`);
       return res.status(400).json({ error: 'Empty request body.' });
+    }
+
+    // Decode base64 if the client sent encoded data (to bypass Azure ARR proxy corruption)
+    let body;
+    if (req.headers['x-content-encoding'] === 'base64') {
+      body = Buffer.from(rawBody.toString('utf-8'), 'base64');
+      console.log(`[upload-raw] ${filename}: decoded base64: ${rawBody.length} chars -> ${body.length} bytes`);
+    } else {
+      body = rawBody;
     }
 
     const magic = body.slice(0, 4).toString('hex');
