@@ -119,6 +119,8 @@ function processReplayFile(filename, filePath, res) {
 
   const parsedPlayers = parseReplay(dest);
   if (!parsedPlayers) {
+    const size = fs.statSync(dest).size;
+    console.warn(`[upload] Parse failed for ${filename} (${size} bytes)`);
     db.markFileProcessed(filename);
     return res.json({ status: 'ok', filename, parsed: false });
   }

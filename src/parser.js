@@ -23,11 +23,15 @@ function parseReplay(filePath) {
   let result;
   try {
     result = Parser.processReplay(filePath, { getBMData: false, overrideVerifiedBuild: true });
-  } catch {
+  } catch (err) {
+    console.warn(`[parser] Exception parsing ${filename}: ${err.message}`);
     return null;
   }
 
-  if (result.status !== Parser.ReplayStatus.OK) return null;
+  if (result.status !== Parser.ReplayStatus.OK) {
+    console.warn(`[parser] Bad status for ${filename}: ${result.status}`);
+    return null;
+  }
 
   const gameDate = result.match.date instanceof Date
     ? result.match.date.toISOString()
