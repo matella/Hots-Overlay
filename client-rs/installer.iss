@@ -3,7 +3,7 @@
 ; optional auto-start, and a clean uninstaller.
 
 #define MyAppName "HotS Replay Client"
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.2.0"
 #define MyAppPublisher "matella"
 #define MyAppURL "https://github.com/matella/Hots-Overlay"
 #define MyAppExeName "hots-replay-client.exe"
