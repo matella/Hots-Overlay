@@ -11,8 +11,8 @@ RUN npm ci --omit=dev
 FROM node:18-slim
 WORKDIR /app
 
-# wget for health check
-RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+# wget for health check, libstdc++ for better-sqlite3 native module
+RUN apt-get update && apt-get install -y wget libstdc++6 && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/node_modules ./node_modules
 COPY package*.json ./
