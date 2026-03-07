@@ -1,6 +1,5 @@
 use crate::settings;
 use crate::state::{AppEvent, BulkProgress, EventSender, SharedState, UploadStatus};
-use base64::{Engine as _, engine::general_purpose};
 use sha2::{Sha256, Digest};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -69,7 +68,7 @@ pub async fn upload_file(
         filename: filename.clone(),
     });
 
-    let url = format!("{}/api/upload-raw", server_url.trim_end_matches('/'));
+    let url = format!("{}/api/upload", server_url.trim_end_matches('/'));
     log(&format!("Uploading {} to {} (auth: {})", filename, url, if auth_token.is_some() { "yes" } else { "no" }));
 
     // Read file
@@ -97,10 +96,6 @@ pub async fn upload_file(
     };
     log(&format!("  {} bytes read, sha256={}", file_bytes.len(), hash));
 
-    // Base64-encode the body to prevent Azure ARR proxy from corrupting binary data
-    let encoded_body = general_purpose::STANDARD.encode(&file_bytes);
-    log(&format!("  base64 encoded: {} bytes -> {} chars", file_bytes.len(), encoded_body.len()));
-
     let client = reqwest::Client::builder()
         .http1_only()
         .build()
@@ -108,13 +103,16 @@ pub async fn upload_file(
     let mut last_err = String::new();
 
     for attempt in 1..=MAX_RETRIES {
+        // Use multipart/form-data — most reliable through Azure proxies
+        let part = reqwest::multipart::Part::bytes(file_bytes.clone())
+            .file_name(filename.clone())
+            .mime_str("application/octet-stream")
+            .unwrap();
+        let form = reqwest::multipart::Form::new().part("replay", part);
+
         let mut req = client
             .post(&url)
-            .header("Content-Type", "text/plain")
-            .header("X-Filename", &filename)
-            .header("X-Content-SHA256", &hash)
-            .header("X-Content-Encoding", "base64")
-            .body(encoded_body.clone());
+            .multipart(form);
 
         if let Some(ref token) = auth_token {
             req = req.bearer_auth(token);
@@ -123,18 +121,6 @@ pub async fn upload_file(
         match req.send().await {
             Ok(resp) => {
                 let status_code = resp.status().as_u16();
-
-                if status_code == 422 {
-                    // Hash mismatch — data corrupted in transit, retry
-                    let text = resp.text().await.unwrap_or_default();
-                    last_err = format!("Hash mismatch (corrupted in transit): {}", text);
-                    log(&format!("Upload attempt {}/{} for {} HASH MISMATCH: {}", attempt, MAX_RETRIES, filename, last_err));
-                    if attempt < MAX_RETRIES {
-                        let delay = Duration::from_secs((attempt * 2) as u64);
-                        sleep(delay).await;
-                    }
-                    continue;
-                }
 
                 if status_code == 409 {
                     // Duplicate
