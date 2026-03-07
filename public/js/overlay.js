@@ -1,8 +1,9 @@
 (function () {
-  const MAX_TILES = 15;
+  const MAX_TILES = 10;
   const ALL_MODES = 'all';
 
   let currentMode = null;
+  let currentView = 'today';  // 'today' or 'recent'
   let currentPlayer = null;   // from ?player= URL param (null = server default)
   let resolvedPlayer = null;  // toon handle resolved by server
   let modeLabels = {};
@@ -61,17 +62,23 @@
     }
   }
 
-  async function fetchToday() {
+  function buildParams() {
     const params = new URLSearchParams();
     params.set('mode', currentMode === ALL_MODES ? ALL_MODES : currentMode);
     if (currentPlayer) params.set('player', currentPlayer);
-    const res = await fetch(`/api/today?${params.toString()}`);
+    return params;
+  }
+
+  async function fetchData() {
+    const params = buildParams();
+    const endpoint = currentView === 'recent' ? '/api/recent' : '/api/today';
+    const res = await fetch(`${endpoint}?${params.toString()}`);
     return res.json();
   }
 
   async function refreshOverlay() {
     try {
-      const { games, stats, player } = await fetchToday();
+      const { games, stats, player } = await fetchData();
       resolvedPlayer = player;
       showBadges = (currentMode === ALL_MODES);
       renderGames(games);
@@ -97,7 +104,7 @@
         if (currentMode !== ALL_MODES && game.gameMode !== currentMode) return;
 
         addGame(game);
-        fetchToday().then(({ stats }) => updateStats(stats)).catch(() => {});
+        fetchData().then(({ stats }) => updateStats(stats)).catch(() => {});
       }
     };
 
@@ -108,6 +115,7 @@
   async function init() {
     const params = new URLSearchParams(window.location.search);
     currentPlayer = params.get('player') || null;
+    currentView = params.get('view') === 'recent' ? 'recent' : 'today';
 
     try {
       const modesRes = await fetch('/api/modes');

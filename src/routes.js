@@ -81,6 +81,15 @@ router.get('/sessions', (req, res) => {
   res.json({ sessions, mode, player });
 });
 
+router.get('/recent', (req, res) => {
+  const player = resolvePlayer(req.query);
+  const mode = resolveMode(req.query);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 10);
+  const games = db.getLastNGames(player, limit, mode);
+  const stats = db.computeStats(games);
+  res.json({ games: games.map(formatGame), stats, mode, player });
+});
+
 router.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
