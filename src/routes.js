@@ -170,6 +170,8 @@ router.post('/upload-raw', checkAuth, rawBody, (req, res) => {
     return res.status(400).json({ error: 'Empty request body.' });
   }
 
+  console.log(`[upload-raw] ${filename}: received ${req.body.length} bytes, content-type=${req.headers['content-type']}, transfer-encoding=${req.headers['transfer-encoding'] || 'none'}`);
+
   const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
   fs.writeFileSync(tempPath, req.body);
   processReplayFile(filename, tempPath, res);

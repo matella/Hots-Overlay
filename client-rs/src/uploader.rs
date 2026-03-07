@@ -94,6 +94,7 @@ pub async fn upload_file(
         let mut req = client
             .post(&url)
             .header("Content-Type", "application/octet-stream")
+            .header("Content-Length", file_bytes.len().to_string())
             .header("X-Filename", &filename)
             .body(file_bytes.clone());
 
