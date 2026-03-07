@@ -94,6 +94,17 @@ router.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// Diagnostic: last N upload results (kept in memory)
+const uploadLog = [];
+const MAX_UPLOAD_LOG = 50;
+function logUploadResult(entry) {
+  uploadLog.push({ ...entry, time: new Date().toISOString() });
+  if (uploadLog.length > MAX_UPLOAD_LOG) uploadLog.shift();
+}
+router.get('/upload-log', (_req, res) => {
+  res.json(uploadLog);
+});
+
 router.get('/modes', (_req, res) => {
   res.json({ modes: db.getAvailableModes(), default: config.gameMode, labels: config.modeLabels });
 });
@@ -115,6 +126,7 @@ function processReplayFile(filename, filePath, res) {
 
   if (db.replayExists(filename)) {
     console.log(`[upload] ${filename}: duplicate, already in replays table`);
+    logUploadResult({ filename, duplicate: true });
     return res.status(409).json({ status: 'duplicate', filename });
   }
   console.log(`[upload] ${filename}: not a duplicate, proceeding`);
@@ -155,6 +167,7 @@ function processReplayFile(filename, filePath, res) {
 
   if (parseResult.error) {
     console.warn(`[upload] ${filename}: parse FAILED — ${parseResult.error}`);
+    logUploadResult({ filename, parsed: false, destSize, parseError: parseResult.error });
     db.markFileProcessed(filename);
     return res.json({ status: 'ok', filename, parsed: false, destSize, parseError: parseResult.error });
   }
@@ -201,6 +214,7 @@ function processReplayFile(filename, filePath, res) {
   console.log(`[upload] Step 7: broadcast sent`);
   console.log(`[upload] === Done ${filename} ===`);
 
+  logUploadResult({ filename, parsed: true, players: insertedCount });
   res.json({ status: 'ok', filename, parsed: true, players: insertedCount });
 }
 
