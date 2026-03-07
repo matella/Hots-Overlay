@@ -1,4 +1,4 @@
-FROM node:18-slim AS build
+FROM node:24-slim AS build
 WORKDIR /app
 
 # better-sqlite3 needs build tools for native compilation
@@ -8,7 +8,7 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 # --- Production stage (no build tools) ---
-FROM node:18-slim
+FROM node:24-slim
 WORKDIR /app
 
 # wget for health check, libstdc++ for better-sqlite3 native module
@@ -20,7 +20,9 @@ COPY server.js ./
 COPY src/ ./src/
 COPY public/ ./public/
 
-RUN mkdir -p /app/data /app/replays
+RUN mkdir -p /app/data /app/replays && \
+    addgroup --system overlay && adduser --system --ingroup overlay overlay && \
+    chown -R overlay:overlay /app/data /app/replays
 
 # Default env vars for Docker (override via Azure App Settings or docker-compose)
 # For Azure: set WEBSITES_ENABLE_APP_SERVICE_STORAGE=true in App Settings,
@@ -29,6 +31,8 @@ RUN mkdir -p /app/data /app/replays
 ENV PORT=8080
 ENV REPLAY_DIR=/app/replays
 EXPOSE 8080
+
+USER overlay
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://localhost:8080/api/health || exit 1

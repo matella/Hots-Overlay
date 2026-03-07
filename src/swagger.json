@@ -1,0 +1,389 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "HotS Overlay API",
+    "description": "API for the Heroes of the Storm OBS overlay. Upload replay files, query game history, and manage the overlay display.",
+    "version": "1.0.0",
+    "license": { "name": "MIT" }
+  },
+  "servers": [
+    { "url": "/api", "description": "Current server" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "tags": ["System"],
+        "responses": {
+          "200": {
+            "description": "Server is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "build": { "type": "string", "format": "date-time", "example": "2026-03-07T17:07:40.812Z" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/today": {
+      "get": {
+        "summary": "Today's games",
+        "description": "Returns all games played today for the specified player and mode.",
+        "tags": ["Games"],
+        "parameters": [
+          { "$ref": "#/components/parameters/player" },
+          { "$ref": "#/components/parameters/mode" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Today's games and stats",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GamesResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/recent": {
+      "get": {
+        "summary": "Recent games",
+        "description": "Returns the last N games (default 10, max 10).",
+        "tags": ["Games"],
+        "parameters": [
+          { "$ref": "#/components/parameters/player" },
+          { "$ref": "#/components/parameters/mode" },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 10, "maximum": 10 },
+            "description": "Number of games to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent games and stats",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/GamesResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/session/{date}": {
+      "get": {
+        "summary": "Games by date",
+        "description": "Returns all games for a specific date.",
+        "tags": ["Games"],
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+            "description": "Date in YYYY-MM-DD format",
+            "example": "2025-09-25"
+          },
+          { "$ref": "#/components/parameters/player" },
+          { "$ref": "#/components/parameters/mode" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Games for the specified date",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/GamesResponse" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "date": { "type": "string", "example": "2025-09-25" }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid date format",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sessions": {
+      "get": {
+        "summary": "Recent sessions",
+        "description": "Returns recent play sessions grouped by date, with stats per session.",
+        "tags": ["Games"],
+        "parameters": [
+          { "$ref": "#/components/parameters/player" },
+          { "$ref": "#/components/parameters/mode" },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 10, "maximum": 50 },
+            "description": "Number of sessions to return"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": { "type": "string", "example": "2025-09-25" },
+                          "wins": { "type": "integer" },
+                          "losses": { "type": "integer" },
+                          "winRate": { "type": "number" },
+                          "games": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/Game" }
+                          }
+                        }
+                      }
+                    },
+                    "mode": { "type": "string" },
+                    "player": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modes": {
+      "get": {
+        "summary": "Available game modes",
+        "tags": ["Metadata"],
+        "responses": {
+          "200": {
+            "description": "List of available modes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "modes": { "type": "array", "items": { "type": "string" }, "example": ["Quick Match", "Storm League", "Custom"] },
+                    "default": { "type": "string", "example": "Storm League" },
+                    "labels": { "type": "object", "additionalProperties": { "type": "string" }, "example": { "Custom": "Scrims" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/players": {
+      "get": {
+        "summary": "Available players",
+        "tags": ["Metadata"],
+        "responses": {
+          "200": {
+            "description": "List of players in the database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "players": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "toon_handle": { "type": "string", "example": "2-Hero-1-2844614" },
+                          "player_name": { "type": "string", "example": "matella" }
+                        }
+                      }
+                    },
+                    "default": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/upload": {
+      "post": {
+        "summary": "Upload replay (multipart)",
+        "description": "Upload a .StormReplay file using multipart form data. Suitable for curl and browser forms.",
+        "tags": ["Upload"],
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "replay": { "type": "string", "format": "binary", "description": ".StormReplay file" }
+                },
+                "required": ["replay"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upload processed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UploadResult" }
+              }
+            }
+          },
+          "400": { "description": "No file provided" },
+          "401": { "description": "Invalid or missing auth token" },
+          "409": { "description": "Duplicate replay" }
+        }
+      }
+    },
+    "/upload-raw": {
+      "post": {
+        "summary": "Upload replay (raw binary)",
+        "description": "Upload a .StormReplay file as raw binary body. Used by the Rust desktop client. Filename is passed via X-Filename header.",
+        "tags": ["Upload"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "X-Filename",
+            "in": "header",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Replay filename (must end with .StormReplay)",
+            "example": "2025-09-25 20.30.00 Towers of Doom.StormReplay"
+          },
+          {
+            "name": "X-Content-SHA256",
+            "in": "header",
+            "schema": { "type": "string" },
+            "description": "SHA256 hash of the file for integrity verification (optional)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": { "type": "string", "format": "binary" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upload processed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/UploadResult" }
+              }
+            }
+          },
+          "400": { "description": "Missing filename or empty body" },
+          "401": { "description": "Invalid or missing auth token" },
+          "409": { "description": "Duplicate replay" },
+          "422": { "description": "Hash mismatch — data corrupted in transit" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "AUTH_TOKEN from server .env"
+      }
+    },
+    "parameters": {
+      "player": {
+        "name": "player",
+        "in": "query",
+        "schema": { "type": "string" },
+        "description": "Player name or toon handle (e.g. 'matella' or '2-Hero-1-2844614'). Defaults to TOON_HANDLE from .env."
+      },
+      "mode": {
+        "name": "mode",
+        "in": "query",
+        "schema": { "type": "string" },
+        "description": "Game mode filter (case-insensitive). Use 'all' for all modes. Defaults to GAME_MODE from .env."
+      }
+    },
+    "schemas": {
+      "Game": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "toonHandle": { "type": "string", "example": "2-Hero-1-2844614" },
+          "playerName": { "type": "string", "example": "matella" },
+          "gameDate": { "type": "string", "format": "date-time" },
+          "map": { "type": "string", "example": "Towers of Doom" },
+          "gameMode": { "type": "string", "example": "Storm League" },
+          "hero": { "type": "string", "example": "Johanna" },
+          "heroShort": { "type": "string", "example": "johanna" },
+          "heroImage": { "type": "string", "format": "uri" },
+          "win": { "type": "boolean" },
+          "duration": { "type": "integer", "nullable": true, "description": "Game duration in seconds" }
+        }
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "wins": { "type": "integer" },
+          "losses": { "type": "integer" },
+          "winRate": { "type": "number", "description": "Win rate percentage (0-100)" }
+        }
+      },
+      "GamesResponse": {
+        "type": "object",
+        "properties": {
+          "games": { "type": "array", "items": { "$ref": "#/components/schemas/Game" } },
+          "stats": { "$ref": "#/components/schemas/Stats" },
+          "mode": { "type": "string" },
+          "player": { "type": "string" }
+        }
+      },
+      "UploadResult": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "duplicate", "error"] },
+          "filename": { "type": "string" },
+          "parsed": { "type": "boolean" },
+          "players": { "type": "integer", "description": "Number of player records inserted" },
+          "parseError": { "type": "string", "nullable": true }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -81,7 +81,7 @@ pub fn load() -> Settings {
 }
 
 /// Save replay_dir to settings.json (preserves other fields)
-pub fn save(replay_dir: &str) {
+pub fn save(replay_dir: &str) -> Result<(), String> {
     let mut file_settings = fs::read_to_string(settings_path())
         .ok()
         .and_then(|s| serde_json::from_str::<SettingsFile>(&s).ok())
@@ -89,9 +89,10 @@ pub fn save(replay_dir: &str) {
 
     file_settings.replay_dir = Some(replay_dir.to_string());
 
-    if let Ok(json) = serde_json::to_string_pretty(&file_settings) {
-        fs::write(settings_path(), json).ok();
-    }
+    let json = serde_json::to_string_pretty(&file_settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+    fs::write(settings_path(), json)
+        .map_err(|e| format!("Failed to write settings: {}", e))
 }
 
 /// Load the set of already-uploaded filenames from uploaded.json

@@ -75,12 +75,11 @@ impl ReplayApp {
         while let Ok(event) = rx.try_recv() {
             match event {
                 AppEvent::ServerConnected => {
+                    // server_connected already set by connectivity check — just trigger rescan
                     let replay_dir = {
-                        let mut s = self.state.lock().unwrap();
-                        s.server_connected = true;
+                        let s = self.state.lock().unwrap();
                         s.replay_dir.clone()
                     };
-                    // Auto-rescan to upload files that were skipped while offline
                     if let Some(dir) = replay_dir {
                         let state = self.state.clone();
                         let tx = self.tx.clone();
@@ -90,7 +89,7 @@ impl ReplayApp {
                     }
                 }
                 AppEvent::ServerDisconnected => {
-                    self.state.lock().unwrap().server_connected = false;
+                    // server_connected already set by connectivity check — nothing else to do
                 }
                 AppEvent::WatcherStarted => {
                     self.state.lock().unwrap().watcher_status = WatcherStatus::Watching;
@@ -210,8 +209,12 @@ impl ReplayApp {
 
     // ── Bulk progress bar ───────────────────────────────────────────────
     fn render_progress(&self, ui: &mut egui::Ui) {
-        let s = self.state.lock().unwrap();
-        if let Some(ref bp) = s.bulk_progress {
+        let bp = {
+            let s = self.state.lock().unwrap();
+            s.bulk_progress.clone()
+        };
+
+        if let Some(ref bp) = bp {
             let pct = if bp.total > 0 {
                 bp.done as f32 / bp.total as f32
             } else {
@@ -428,7 +431,10 @@ impl ReplayApp {
             return;
         }
 
-        settings::save(&dir);
+        if let Err(e) = settings::save(&dir) {
+            self.save_message = Some((format!("Failed to save: {}", e), false, Instant::now()));
+            return;
+        }
 
         {
             let mut s = self.state.lock().unwrap();

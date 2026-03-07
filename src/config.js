@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const path = require('path');
 
 // Mode display name overrides: MODE_LABEL_Custom=Scrims in .env

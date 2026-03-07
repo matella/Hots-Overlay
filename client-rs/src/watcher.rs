@@ -7,27 +7,20 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc as tokio_mpsc;
 
-/// Stabilization wait before uploading (same as chokidar's awaitWriteFinish)
 const STABILITY_THRESHOLD: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Handle to a running watcher that can be stopped
 pub struct WatcherHandle {
     _watcher: RecommendedWatcher,
     stop_tx: tokio_mpsc::Sender<()>,
 }
 
 impl WatcherHandle {
-    /// Stop the watcher and its stabilization task
     pub fn stop(self) {
-        // Drop watcher (stops OS-level watching)
-        // Signal the stabilization task to stop
-        let _ = self.stop_tx.send(());
+        let _ = self.stop_tx.try_send(());
     }
 }
 
-/// Start watching a directory for new .StormReplay files.
-/// Returns a handle that can be used to stop the watcher.
 pub fn start_watcher(
     replay_dir: &str,
     state: SharedState,
@@ -39,27 +32,21 @@ pub fn start_watcher(
         return Err(format!("Not a directory: {}", replay_dir));
     }
 
-    // Channel for raw filesystem events → stabilization task
     let (fs_tx, mut fs_rx) = tokio_mpsc::unbounded_channel::<PathBuf>();
-
-    // Channel to stop the stabilization task
     let (stop_tx, mut stop_rx) = tokio_mpsc::channel::<()>(1);
 
-    // Spawn the stabilization task: waits for file to be stable before uploading
     let state_clone = state.clone();
     let tx_clone = tx.clone();
     runtime.spawn(async move {
-        // Track pending files and when they were last seen modified
         let pending: Arc<Mutex<HashMap<PathBuf, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
+        let agent = Arc::new(uploader::make_agent());
 
         loop {
             tokio::select! {
-                // Receive new file notification
                 Some(path) = fs_rx.recv() => {
                     let mut p = pending.lock().unwrap();
                     p.insert(path, Instant::now());
                 }
-                // Poll for stable files
                 _ = tokio::time::sleep(POLL_INTERVAL) => {
                     let mut ready = Vec::new();
                     {
@@ -68,26 +55,22 @@ pub fn start_watcher(
                         p.retain(|path, last_seen| {
                             if now.duration_since(*last_seen) >= STABILITY_THRESHOLD {
                                 ready.push(path.clone());
-                                false // remove from pending
+                                false
                             } else {
                                 true
                             }
                         });
                     }
                     for path in ready {
-                        let connected = {
-                            state_clone.lock().unwrap().server_connected
-                        };
+                        let connected = state_clone.lock().unwrap().server_connected;
                         if connected {
-                            uploader::upload_file(&path, &state_clone, &tx_clone).await;
+                            uploader::upload_file(&path, &state_clone, &tx_clone, &agent).await;
                         } else {
-                            // Re-queue — will retry on next poll cycle
                             let mut p = pending.lock().unwrap();
                             p.insert(path, Instant::now());
                         }
                     }
                 }
-                // Stop signal
                 _ = stop_rx.recv() => {
                     break;
                 }
@@ -95,8 +78,6 @@ pub fn start_watcher(
         }
     });
 
-    // Create the OS-level file watcher
-    let watcher_dir = dir.clone();
     let mut watcher = notify::recommended_watcher(move |result: Result<Event, notify::Error>| {
         if let Ok(event) = result {
             match event.kind {
@@ -114,10 +95,9 @@ pub fn start_watcher(
     .map_err(|e| format!("Failed to create watcher: {}", e))?;
 
     watcher
-        .watch(&watcher_dir, RecursiveMode::NonRecursive)
+        .watch(&dir, RecursiveMode::NonRecursive)
         .map_err(|e| format!("Failed to watch directory: {}", e))?;
 
-    // Update state
     {
         let mut s = state.lock().unwrap();
         s.watcher_status = WatcherStatus::Watching;

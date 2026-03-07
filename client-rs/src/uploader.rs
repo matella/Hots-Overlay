@@ -1,6 +1,7 @@
 use crate::settings;
 use crate::state::{AppEvent, BulkProgress, EventSender, SharedState, UploadStatus};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -19,14 +20,26 @@ fn log(msg: &str) {
 }
 
 const MAX_RETRIES: u32 = 5;
+const INITIAL_UPLOAD_LIMIT: usize = 10;
 const CONNECTIVITY_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECTIVITY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Create a shared ureq Agent for connection pooling (reuses TCP connections)
+pub fn make_agent() -> ureq::Agent {
+    ureq::Agent::new_with_config(
+        ureq::config::Config::builder()
+            .timeout_global(Some(Duration::from_secs(120)))
+            .http_status_as_error(false)
+            .build(),
+    )
+}
 
 /// Upload a single replay file. Returns the upload result status.
 pub async fn upload_file(
     file_path: &Path,
     state: &SharedState,
     tx: &EventSender,
+    agent: &Arc<ureq::Agent>,
 ) -> UploadStatus {
     let filename = file_path
         .file_name()
@@ -34,19 +47,13 @@ pub async fn upload_file(
         .to_string_lossy()
         .to_string();
 
-    // Skip if already uploaded or in-flight
+    // Skip if already uploaded or server is disconnected
     {
         let s = state.lock().unwrap();
         if s.uploaded.contains(&filename) {
             return UploadStatus::Duplicate;
         }
-    }
-
-    // Skip if server is disconnected — don't burn retries
-    {
-        let s = state.lock().unwrap();
         if !s.server_connected {
-            log(&format!("Skipped {} (server disconnected)", filename));
             return UploadStatus::Skipped;
         }
     }
@@ -67,31 +74,37 @@ pub async fn upload_file(
     });
 
     let url = format!("{}/api/upload-raw", server_url.trim_end_matches('/'));
-    log(&format!("Uploading {} to {} (auth: {})", filename, url, if auth_token.is_some() { "yes" } else { "no" }));
-
     let file_path_owned = file_path.to_path_buf();
     let mut last_err = String::new();
 
     for attempt in 1..=MAX_RETRIES {
-        // Use ureq (blocking HTTP) — reqwest's async streaming gets corrupted by Azure ARR proxy
         let url_c = url.clone();
         let filename_c = filename.clone();
         let auth_c = auth_token.clone();
         let path_c = file_path_owned.clone();
+        let agent_c = agent.clone();
 
         let result = tokio::task::spawn_blocking(move || -> Result<(u16, String), String> {
             let file_bytes = std::fs::read(&path_c)
                 .map_err(|e| format!("Read error: {}", e))?;
 
-            let mut req = ureq::post(&url_c)
+            // Percent-encode filename for safe HTTP header transport (non-ASCII chars)
+            let encoded_filename: String = filename_c.bytes().map(|b| {
+                if b.is_ascii_alphanumeric() || b".-_ ()".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{:02X}", b)
+                }
+            }).collect();
+
+            let mut req = agent_c.post(&url_c)
                 .header("Content-Type", "application/octet-stream")
-                .header("X-Filename", &filename_c);
+                .header("X-Filename", &encoded_filename);
 
             if let Some(ref token) = auth_c {
                 req = req.header("Authorization", &format!("Bearer {}", token));
             }
 
-            // send(&[u8]) uses Content-Length (no chunked encoding)
             match req.send(&file_bytes) {
                 Ok(mut resp) => {
                     let status = resp.status().as_u16();
@@ -99,17 +112,12 @@ pub async fn upload_file(
                         .unwrap_or_default();
                     Ok((status, body))
                 }
-                Err(ureq::Error::StatusCode(code)) => {
-                    Ok((code, format!("HTTP error {}", code)))
-                }
                 Err(e) => Err(format!("Network error: {}", e)),
             }
         }).await;
 
         match result {
             Ok(Ok((status_code, body))) => {
-                log(&format!("  response: HTTP {} body={}", status_code, &body[..body.len().min(200)]));
-
                 if status_code == 409 {
                     let mut s = state.lock().unwrap();
                     s.uploaded.insert(filename.clone());
@@ -120,12 +128,12 @@ pub async fn upload_file(
                     let _ = tx.send(AppEvent::UploadDuplicate {
                         filename: filename.clone(),
                     });
-                    log(&format!("Duplicate: {}", filename));
                     return UploadStatus::Duplicate;
                 }
 
                 if (200..300).contains(&status_code) {
-                    log(&format!("Uploaded: {} -> {}", filename, body));
+                    let snippet: String = body.chars().take(200).collect();
+                    log(&format!("Uploaded: {} -> {}", filename, snippet));
                     let mut s = state.lock().unwrap();
                     s.uploaded.insert(filename.clone());
                     s.uploaded_count = s.uploaded.len();
@@ -139,20 +147,20 @@ pub async fn upload_file(
                 }
 
                 last_err = format!("HTTP {}: {}", status_code, body);
-                log(&format!("Upload attempt {}/{} for {} failed: {}", attempt, MAX_RETRIES, filename, last_err));
+                log(&format!("Upload {}/{} for {} failed: {}", attempt, MAX_RETRIES, filename, last_err));
             }
             Ok(Err(e)) => {
                 last_err = e.clone();
-                log(&format!("Upload attempt {}/{} for {} error: {}", attempt, MAX_RETRIES, filename, e));
+                log(&format!("Upload {}/{} for {} error: {}", attempt, MAX_RETRIES, filename, e));
             }
             Err(e) => {
                 last_err = format!("Task error: {}", e);
-                log(&format!("Upload attempt {}/{} for {} error: {}", attempt, MAX_RETRIES, filename, last_err));
+                log(&format!("Upload {}/{} for {} error: {}", attempt, MAX_RETRIES, filename, last_err));
             }
         }
 
         if attempt < MAX_RETRIES {
-            let delay = Duration::from_secs((attempt * 2) as u64);
+            let delay = Duration::from_secs(2u64.pow(attempt.min(6)));
             sleep(delay).await;
         }
     }
@@ -164,39 +172,37 @@ pub async fn upload_file(
     s.request_repaint();
     let _ = tx.send(AppEvent::UploadFailed {
         filename: filename.clone(),
-        error: err_msg.clone(),
+        error: err_msg,
     });
-    eprintln!(
-        "Failed to upload {} after {} attempts: {}",
-        filename, MAX_RETRIES, last_err
-    );
     UploadStatus::Failed
 }
 
-/// Scan a directory for .StormReplay files and upload any that haven't been uploaded yet.
+/// Scan a directory for .StormReplay files and upload the most recent ones
+/// that haven't been uploaded yet. Only uploads up to INITIAL_UPLOAD_LIMIT files
+/// (newest first) — the file watcher handles new replays going forward.
 pub async fn scan_and_upload(
     replay_dir: &Path,
     state: &SharedState,
     tx: &EventSender,
 ) {
-    // Don't scan if server is not connected
     {
-        let s = state.lock().unwrap();
-        if !s.server_connected {
-            log("Scan skipped: server not connected");
+        let mut s = state.lock().unwrap();
+        if !s.server_connected || s.scanning {
             return;
         }
+        s.scanning = true;
     }
 
     let entries = match std::fs::read_dir(replay_dir) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Failed to read replay dir: {}", e);
+            state.lock().unwrap().scanning = false;
             return;
         }
     };
 
-    let mut to_upload: Vec<PathBuf> = Vec::new();
+    let mut candidates: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
     let already_uploaded = {
         let s = state.lock().unwrap();
         s.uploaded.clone()
@@ -212,82 +218,80 @@ pub async fn scan_and_upload(
                     .to_string_lossy()
                     .to_string();
                 if !already_uploaded.contains(&fname) {
-                    to_upload.push(path);
+                    let mtime = entry.metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                    candidates.push((path, mtime));
                 }
             }
         }
     }
 
-    if to_upload.is_empty() {
-        println!(
-            "All {} replays already uploaded.",
-            already_uploaded.len()
-        );
+    if candidates.is_empty() {
+        state.lock().unwrap().scanning = false;
         return;
     }
 
+    // Sort newest first, take only the most recent N
+    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.truncate(INITIAL_UPLOAD_LIMIT);
+    let to_upload: Vec<PathBuf> = candidates.into_iter().map(|(p, _)| p).collect();
+
     println!(
-        "Uploading {} new replays ({} already uploaded)...",
+        "Uploading {} most recent replays ({} already uploaded, watcher handles the rest)...",
         to_upload.len(),
         already_uploaded.len()
     );
 
     let total = to_upload.len();
-    let mut done = 0usize;
-    let mut failed = 0usize;
-    let mut duplicates = 0usize;
+    let agent = Arc::new(make_agent());
 
     // Send initial bulk progress
     {
-        let bp = BulkProgress {
-            done: 0,
-            failed: 0,
-            duplicates: 0,
-            total,
-        };
+        let bp = BulkProgress { done: 0, failed: 0, duplicates: 0, total };
         let mut s = state.lock().unwrap();
         s.bulk_progress = Some(bp.clone());
         s.request_repaint();
         let _ = tx.send(AppEvent::BulkProgress(bp));
     }
 
-    for file_path in &to_upload {
-        let result = upload_file(file_path, state, tx).await;
-        done += 1;
+    let mut done = 0usize;
+    let mut fail_count = 0usize;
+    let mut dupe_count = 0usize;
 
-        match result {
-            UploadStatus::Duplicate => duplicates += 1,
-            UploadStatus::Failed => failed += 1,
-            UploadStatus::Skipped => {
-                // Server went offline mid-scan — stop trying
-                log("Server disconnected during scan, aborting remaining uploads");
+    for file_path in &to_upload {
+        {
+            let s = state.lock().unwrap();
+            if !s.server_connected {
                 break;
             }
+        }
+
+        let status = upload_file(file_path, state, tx, &Arc::clone(&agent)).await;
+        done += 1;
+
+        match status {
+            UploadStatus::Duplicate => { dupe_count += 1; }
+            UploadStatus::Failed => { fail_count += 1; }
             _ => {}
         }
 
-        let bp = BulkProgress {
-            done,
-            failed,
-            duplicates,
-            total,
-        };
+        let bp = BulkProgress { done, failed: fail_count, duplicates: dupe_count, total };
         {
             let mut s = state.lock().unwrap();
             s.bulk_progress = Some(bp.clone());
             s.request_repaint();
         }
         let _ = tx.send(AppEvent::BulkProgress(bp));
-
-        if done % 50 == 0 || done == total {
-            println!("  {}/{}", done, total);
-        }
     }
 
-    // Clear bulk progress
+    println!("  Initial upload done: {}/{} ({} duplicates, {} failed)", done, total, dupe_count, fail_count);
+
+    // Clear bulk progress and scanning flag
     {
         let mut s = state.lock().unwrap();
         s.bulk_progress = None;
+        s.scanning = false;
         s.request_repaint();
     }
     let _ = tx.send(AppEvent::BulkDone);
@@ -300,10 +304,11 @@ pub fn start_connectivity_check(
     runtime: tokio::runtime::Handle,
 ) {
     runtime.spawn(async move {
-        let client = reqwest::Client::builder()
-            .timeout(CONNECTIVITY_TIMEOUT)
-            .build()
-            .unwrap();
+        let agent = ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                .timeout_global(Some(CONNECTIVITY_TIMEOUT))
+                .build(),
+        );
 
         loop {
             let (url, was_connected) = {
@@ -312,7 +317,10 @@ pub fn start_connectivity_check(
             };
 
             let check_url = format!("{}/api/modes", url.trim_end_matches('/'));
-            let is_connected = client.get(&check_url).send().await.map_or(false, |r| r.status().is_success());
+            let agent_c = agent.clone();
+            let is_connected = tokio::task::spawn_blocking(move || {
+                agent_c.get(&check_url).call().is_ok()
+            }).await.unwrap_or(false);
 
             if is_connected != was_connected {
                 let mut s = state.lock().unwrap();

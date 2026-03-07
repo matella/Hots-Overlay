@@ -36,10 +36,12 @@ pub fn create_tray() -> TrayIcon {
     std::thread::spawn(move || {
         let receiver = MenuEvent::receiver();
         loop {
-            if let Ok(event) = receiver.recv() {
-                if event.id == show_id {
+            match receiver.recv() {
+                Ok(event) if event.id == show_id => {
                     win_utils::show_window(win_utils::WINDOW_TITLE);
                 }
+                Ok(_) => {}
+                Err(_) => break,
             }
         }
     });

@@ -96,6 +96,9 @@ function initDatabase() {
     console.log('Migration complete. Replays will be re-parsed for all players.');
   }
 
+  // Compound index for queries filtering by toon_handle + game_mode
+  db.exec('CREATE INDEX IF NOT EXISTS idx_replays_toon_mode ON replays(toon_handle, game_mode)');
+
   stmts = {
     insert: db.prepare(`
       INSERT OR IGNORE INTO replays (filename, toon_handle, game_date, map, game_mode, hero, hero_short, win, duration, player_name)
@@ -184,6 +187,10 @@ function insertReplay(data) {
   return stmts.insert.run(data);
 }
 
+function runInTransaction(fn) {
+  db.transaction(fn)();
+}
+
 function replayExists(filename) {
   return !!stmts.getByFilename.get(filename);
 }
@@ -256,6 +263,7 @@ module.exports = {
   initDatabase,
   computeStats,
   insertReplay,
+  runInTransaction,
   replayExists,
   getAllProcessedFilenames,
   isFileProcessed,

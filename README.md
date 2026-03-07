@@ -2,19 +2,6 @@
 
 A real-time OBS overlay for Heroes of the Storm that displays your win/loss history as a row of hero portraits with a win rate counter. Parses `.StormReplay` files directly — no API needed.
 
-## Features
-
-- Hero portrait tiles with green (win) / red (loss) borders
-- Live win rate counter (W-L | %)
-- Auto-detects new replays and updates the overlay in real time via WebSocket
-- Game mode filtering (Storm League, Custom/Scrims, All, etc.)
-- Mode badges when viewing all modes
-- Case-insensitive mode selection via URL parameters
-- Transparent background for OBS Browser Source
-- SQLite database to avoid re-parsing thousands of replay files
-- **Docker support** for remote deployment
-- **Native desktop client** (Rust) to upload replays from your PC to a remote server
-
 ## Preview
 
 ```
@@ -24,120 +11,121 @@ A real-time OBS overlay for Heroes of the Storm that displays your win/loss hist
 +-------------------------------------------+
 ```
 
-## Architecture
+## How It Works
 
 ```
 Your PC                          Remote Server (Docker)
-┌──────────────────┐             ┌──────────────────────┐
-│  HotS Replay     │  uploads    │  Node.js Server      │
-│  Client (Rust)   │ ─────────── │  - Replay parser     │
-│                  │   HTTP      │  - SQLite database    │
-│  Watches replay  │             │  - WebSocket updates  │
-│  folder, uploads │             │  - OBS overlay        │
-│  new .StormReplay│             │                      │
-│  files           │             │  http://server:3001   │
-└──────────────────┘             └──────────────────────┘
-                                          │
++-----------------+              +----------------------+
+|  HotS Replay    |   uploads   |  Node.js Server      |
+|  Client (Rust)  | ----------> |  - Replay parser     |
+|                 |    HTTP     |  - SQLite database   |
+|  Watches replay |             |  - WebSocket updates |
+|  folder, uploads|             |  - OBS overlay       |
+|  new .StormReplay             |                      |
+|  files          |             |  http://server:8080  |
++-----------------+              +----------------------+
+                                          |
                                    OBS Browser Source
 ```
 
-## Quick Start (Local)
+The **desktop client** runs on your gaming PC and watches your replay folder. When a new `.StormReplay` file appears, it uploads it to the **server**. The server parses the replay, stores the results in SQLite, and pushes updates to OBS via WebSocket.
 
-```bash
-npm install
-cp .env.example .env   # Edit .env with your paths
-npm start
+## Installation (Desktop Client)
+
+1. Download `HotSReplayClient-1.0.0-setup.exe` from the [latest release](https://github.com/matella/Hots-Overlay/releases/latest)
+2. Run the installer — it will install to `Program Files` with optional desktop shortcut and auto-start
+3. Launch **HotS Replay Client**
+4. Click **Settings** and set your **Replay Directory** to your HotS replay folder:
+   ```
+   C:\Users\<you>\Documents\Heroes of the Storm\Accounts\<account>\<toon>\Replays\Multiplayer
+   ```
+5. Click **Save** — the client will start uploading your most recent replays and watch for new ones
+
+The client runs in the system tray and automatically uploads new replays as you play. If the server goes offline, uploads resume automatically when it comes back.
+
+### Where to find your replay folder
+
+HotS saves replays to:
+```
+C:\Users\<YourName>\Documents\Heroes of the Storm\Accounts\<AccountNumber>\<ToonHandle>\Replays\Multiplayer
+```
+The `<ToonHandle>` looks like `2-Hero-1-1234567`.
+
+### Client settings
+
+Settings are stored in `%LOCALAPPDATA%\HotS Replay Client\settings.json`. You can also configure the server URL and auth token by editing this file directly:
+
+```json
+{
+  "serverUrl": "https://your-server.example.com",
+  "authToken": "your-token-here",
+  "replayDir": "C:\\Users\\you\\Documents\\Heroes of the Storm\\Accounts\\..."
+}
 ```
 
-Then add `http://localhost:3001` as an OBS Browser Source (800x120, transparent background).
-
-## Quick Start (Docker + Remote)
-
-### Server
+## Server Setup (Docker)
 
 ```bash
-cp .env.example .env   # Set TOON_HANDLE and optionally AUTH_TOKEN
+cp .env.example .env   # Edit with your TOON_HANDLE
 docker compose up -d
 ```
 
-OBS Browser Source points to `http://your-server:3001`.
+Then add your server URL as an OBS Browser Source (800x120, transparent background).
 
-### Client (your gaming PC)
+### Server Setup (Local / No Docker)
 
-Download the installer from the [latest release](https://github.com/matella/Hots-Overlay/releases/latest) and run it. The client is a lightweight native Windows app (~4 MB installer) with a system tray icon.
+```bash
+npm install
+cp .env.example .env   # Edit with your paths and TOON_HANDLE
+npm start
+```
 
-On first launch, configure:
-- **Server URL** — e.g. `http://your-server:3001`
-- **Replay directory** — your HotS replay folder
-- **Auth token** — must match the server's `AUTH_TOKEN` (if set)
+Then add `http://localhost:8080` as an OBS Browser Source.
 
-The client automatically uploads existing replays on first run, then watches for new ones in real time. If the server goes offline, uploads are queued and retried automatically when it comes back.
+## Server Configuration (`.env`)
 
-See [SETUP.md](SETUP.md) for detailed instructions.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TOON_HANDLE` | Yes | Your ToonHandle (e.g. `2-Hero-1-2844614`) — found in your replay folder path |
+| `REPLAY_DIR` | Yes | Path to replay folder (local) or upload dir (Docker: `/app/replays`) |
+| `PORT` | No | Server port (default: `8080`) |
+| `GAME_MODE` | No | Default game mode (default: `Storm League`) |
+| `DB_PATH` | No | SQLite database path (default: `./data/overlay.db`) |
+| `AUTH_TOKEN` | No | Shared secret for upload endpoints |
+| `TZ` | No | Timezone for Docker (default: `America/New_York`) |
+| `MODE_LABEL_*` | No | Custom display labels (e.g. `MODE_LABEL_Custom=Scrims`) |
 
-## URL Parameters
+## OBS Overlay URL Parameters
 
-Control the displayed mode via the `?mode=` URL parameter (case-insensitive):
+Control the overlay display via URL query parameters (all case-insensitive):
 
-| URL | Shows |
-|-----|-------|
-| `http://server:3001` | Default mode (Storm League) |
-| `http://server:3001?mode=storm+league` | Storm League only |
-| `http://server:3001?mode=custom` | Custom games only |
-| `http://server:3001?mode=all` | All modes (with badges) |
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `mode` | Filter by game mode | `?mode=storm+league`, `?mode=all` |
+| `player` | Show a specific player | `?player=matella` or `?player=2-Hero-1-2844614` |
+| `view` | Display mode | `?view=recent` (last N games) or `?view=today` (default) |
+
+Examples:
+- `http://server:8080` — Today's games, default mode, default player
+- `http://server:8080?mode=all&view=recent` — Recent games across all modes
+- `http://server:8080?player=matella&mode=storm+league` — Storm League games for matella
 
 ## API Endpoints
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/today?mode=` | Today's games and stats |
-| `GET /api/session/:date?mode=` | Games for a specific date (YYYY-MM-DD) |
-| `GET /api/sessions?mode=&limit=10` | Recent sessions with stats |
-| `GET /api/modes` | Available modes, default, and labels |
-| `POST /api/upload` | Upload a `.StormReplay` file (multipart, auth optional) |
-
-## Configuration
-
-### Server (`.env`)
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `REPLAY_DIR` | Yes | Path to replay folder (local) or upload dir (Docker) |
-| `TOON_HANDLE` | Yes | Your ToonHandle (e.g. `2-Hero-1-2844614`) |
-| `PORT` | No | Server port (default: `3000`) |
-| `GAME_MODE` | No | Default game mode (default: `Storm League`) |
-| `DB_PATH` | No | SQLite database path (default: `./data/overlay.db`) |
-| `AUTH_TOKEN` | No | Shared secret for upload endpoint |
-| `TZ` | No | Timezone for Docker (default: `America/New_York`) |
-| `MODE_LABEL_*` | No | Custom display labels (e.g. `MODE_LABEL_Custom=Scrims`) |
-
-### Client
-
-The client stores settings in `%LOCALAPPDATA%\HotS Replay Client\settings.json`. Configuration is done through the GUI — no `.env` file needed.
-
-| Setting | Description |
-|---------|-------------|
-| Server URL | URL of the overlay server (e.g. `http://your-server:3001`) |
-| Replay directory | Path to your local HotS replay folder |
-| Auth token | Must match server's `AUTH_TOKEN` (if set) |
+| `GET /api/health` | Server health check |
+| `GET /api/today?player=&mode=` | Today's games and stats |
+| `GET /api/recent?player=&mode=&limit=` | Last N games (default 10) |
+| `GET /api/session/:date?player=&mode=` | Games for a specific date |
+| `GET /api/sessions?player=&mode=&limit=` | Recent sessions with stats |
+| `GET /api/modes` | Available game modes |
+| `GET /api/players` | Available players |
+| `POST /api/upload` | Upload replay (multipart form) |
+| `POST /api/upload-raw` | Upload replay (raw binary) |
+| `GET /api/docs` | Interactive Swagger docs |
 
 ## Tech Stack
 
-### Server
-- **Runtime**: Node.js
-- **Replay parsing**: [hots-parser](https://github.com/ebshimizu/hots-parser)
-- **Database**: SQLite via better-sqlite3
-- **Server**: Express + WebSocket (ws)
-- **File watching**: chokidar
-- **File uploads**: multer
-- **Frontend**: Vanilla HTML/CSS/JS
-- **Hero images**: GitHub CDN (heroespatchnotes/heroes-talents)
-- **Containerization**: Docker
-
-### Desktop Client
-- **Language**: Rust
-- **GUI**: egui/eframe
-- **File watching**: notify (cross-platform FS events)
-- **HTTP**: reqwest (multipart uploads)
-- **System tray**: tray-icon
-- **Installer**: Inno Setup
+**Server**: Node.js, Express, SQLite (better-sqlite3), WebSocket, hots-parser, Docker
+**Client**: Rust, egui/eframe, ureq, notify, tray-icon, Inno Setup installer

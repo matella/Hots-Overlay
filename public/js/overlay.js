@@ -90,10 +90,12 @@
   }
 
   function connectWebSocket() {
-    const ws = new WebSocket(`ws://${location.host}`);
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${location.host}`);
 
     ws.onmessage = (e) => {
-      const data = JSON.parse(e.data);
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
       if (data.type === 'new_game') {
         const game = data.game;
 

@@ -11,6 +11,8 @@ const { parseReplay, scanAndParseAll } = require('./src/parser');
 const { startWatcher } = require('./src/watcher');
 const { getHeroImageUrl } = require('./src/heroNames');
 const routes = require('./src/routes');
+const swaggerUi = require('swagger-ui-express');
+const swaggerDoc = require('./src/swagger.json');
 
 fs.mkdirSync(config.replayDir, { recursive: true });
 console.log('[startup] Initializing database...');
@@ -19,6 +21,7 @@ console.log('[startup] Database ready');
 
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
 app.use('/api', routes);
 
 const server = http.createServer(app);
@@ -27,7 +30,9 @@ const wss = new WebSocketServer({ server });
 function broadcast(data) {
   const msg = JSON.stringify(data);
   for (const client of wss.clients) {
-    if (client.readyState === 1) client.send(msg);
+    if (client.readyState === 1) {
+      try { client.send(msg); } catch {}
+    }
   }
 }
 

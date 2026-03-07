@@ -74,6 +74,7 @@ pub struct AppState {
     pub uploaded_count: usize,
     pub recent_uploads: VecDeque<LogEntry>,
     pub bulk_progress: Option<BulkProgress>,
+    pub scanning: bool,
 
     // GUI repaint handle
     pub ctx: Option<egui::Context>,
@@ -97,6 +98,7 @@ impl AppState {
             uploaded_count,
             recent_uploads: VecDeque::new(),
             bulk_progress: None,
+            scanning: false,
             ctx: None,
         }
     }
