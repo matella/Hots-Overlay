@@ -1,6 +1,5 @@
 use crate::settings;
 use crate::state::{AppEvent, BulkProgress, EventSender, SharedState, UploadStatus};
-use reqwest::multipart;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::fs;
@@ -68,7 +67,7 @@ pub async fn upload_file(
         filename: filename.clone(),
     });
 
-    let url = format!("{}/api/upload", server_url.trim_end_matches('/'));
+    let url = format!("{}/api/upload-raw", server_url.trim_end_matches('/'));
     log(&format!("Uploading {} to {} (auth: {})", filename, url, if auth_token.is_some() { "yes" } else { "no" }));
 
     // Read file
@@ -92,14 +91,12 @@ pub async fn upload_file(
     let mut last_err = String::new();
 
     for attempt in 1..=MAX_RETRIES {
-        let part = multipart::Part::bytes(file_bytes.clone())
-            .file_name(filename.clone())
-            .mime_str("application/octet-stream")
-            .unwrap();
+        let mut req = client
+            .post(&url)
+            .header("Content-Type", "application/octet-stream")
+            .header("X-Filename", &filename)
+            .body(file_bytes.clone());
 
-        let form = multipart::Form::new().part("replay", part);
-
-        let mut req = client.post(&url).multipart(form);
         if let Some(ref token) = auth_token {
             req = req.bearer_auth(token);
         }

@@ -109,23 +109,14 @@ function checkAuth(req, res, next) {
   res.status(401).json({ error: 'Invalid or missing auth token.' });
 }
 
-router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No .StormReplay file provided.' });
-  }
-
-  const filename = req.file.originalname;
-
-  // Check if this replay already exists in the database
+function processReplayFile(filename, filePath, res) {
   if (db.replayExists(filename)) {
-    fs.unlinkSync(req.file.path); // clean up temp upload
     return res.status(409).json({ status: 'duplicate', filename });
   }
 
   const dest = path.join(config.replayDir, filename);
-  fs.renameSync(req.file.path, dest);
+  if (filePath !== dest) fs.renameSync(filePath, dest);
 
-  // Parse immediately instead of relying on the file watcher
   const parsedPlayers = parseReplay(dest);
   if (!parsedPlayers) {
     db.markFileProcessed(filename);
@@ -156,6 +147,30 @@ router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
   }
 
   res.json({ status: 'ok', filename, parsed: true });
+}
+
+// Multipart upload (for curl / browser forms)
+router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No .StormReplay file provided.' });
+  }
+  processReplayFile(req.file.originalname, req.file.path, res);
+});
+
+// Raw binary upload (for the Rust client — avoids multipart/busboy issues with proxies)
+const rawBody = express.raw({ type: 'application/octet-stream', limit: '10mb' });
+router.post('/upload-raw', checkAuth, rawBody, (req, res) => {
+  const filename = req.headers['x-filename'];
+  if (!filename || !filename.endsWith('.StormReplay')) {
+    return res.status(400).json({ error: 'Missing or invalid X-Filename header.' });
+  }
+  if (!req.body || !req.body.length) {
+    return res.status(400).json({ error: 'Empty request body.' });
+  }
+
+  const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
+  fs.writeFileSync(tempPath, req.body);
+  processReplayFile(filename, tempPath, res);
 });
 
 module.exports = router;
