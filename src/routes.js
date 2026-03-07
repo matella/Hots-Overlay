@@ -159,6 +159,14 @@ router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
   processReplayFile(req.file.originalname, req.file.path, res);
 });
 
+// Debug: test body reception without parsing
+const rawBodyDebug = express.raw({ type: 'application/octet-stream', limit: '10mb' });
+router.post('/upload-debug', rawBodyDebug, (req, res) => {
+  const len = req.body ? req.body.length : 0;
+  const first4 = req.body ? req.body.slice(0, 4).toString('hex') : 'none';
+  res.json({ receivedBytes: len, first4hex: first4, contentType: req.headers['content-type'] });
+});
+
 // Raw binary upload (for the Rust client — avoids multipart/busboy issues with proxies)
 const rawBody = express.raw({ type: 'application/octet-stream', limit: '10mb' });
 router.post('/upload-raw', checkAuth, rawBody, (req, res) => {
