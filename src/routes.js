@@ -110,26 +110,77 @@ function checkAuth(req, res, next) {
 }
 
 function processReplayFile(filename, filePath, res) {
+  console.log(`[upload] === Processing ${filename} ===`);
+  console.log(`[upload] Step 1: checking if replay exists in DB...`);
+
   if (db.replayExists(filename)) {
+    console.log(`[upload] ${filename}: duplicate, already in replays table`);
     return res.status(409).json({ status: 'duplicate', filename });
   }
+  console.log(`[upload] ${filename}: not a duplicate, proceeding`);
 
+  // Step 2: move temp file to final destination
   const dest = path.join(config.replayDir, filename);
-  if (filePath !== dest) fs.renameSync(filePath, dest);
+  console.log(`[upload] Step 2: moving file to ${dest}`);
+  console.log(`[upload]   source: ${filePath}`);
+  console.log(`[upload]   source exists: ${fs.existsSync(filePath)}`);
 
-  const destSize = fs.statSync(dest).size;
-  const parsedPlayers = parseReplay(dest);
-  if (!parsedPlayers) {
-    console.warn(`[upload] Parse failed for ${filename} (${destSize} bytes on disk)`);
+  try {
+    if (filePath !== dest) {
+      const srcSize = fs.statSync(filePath).size;
+      console.log(`[upload]   source size: ${srcSize} bytes`);
+      fs.renameSync(filePath, dest);
+      console.log(`[upload]   rename OK`);
+    } else {
+      console.log(`[upload]   source === dest, no rename needed`);
+    }
+  } catch (err) {
+    console.error(`[upload] ${filename}: rename failed: ${err.message}`);
+    return res.status(500).json({ status: 'error', filename, error: `Rename failed: ${err.message}` });
+  }
+
+  // Step 3: verify destination file
+  let destSize;
+  try {
+    destSize = fs.statSync(dest).size;
+    console.log(`[upload] Step 3: dest file verified, ${destSize} bytes`);
+  } catch (err) {
+    console.error(`[upload] ${filename}: dest file stat failed: ${err.message}`);
+    return res.status(500).json({ status: 'error', filename, error: `Dest stat failed: ${err.message}` });
+  }
+
+  // Step 4: parse the replay
+  console.log(`[upload] Step 4: parsing replay...`);
+  const parseResult = parseReplay(dest);
+
+  if (parseResult.error) {
+    console.warn(`[upload] ${filename}: parse FAILED — ${parseResult.error}`);
     db.markFileProcessed(filename);
-    return res.json({ status: 'ok', filename, parsed: false, destSize });
+    return res.json({ status: 'ok', filename, parsed: false, destSize, parseError: parseResult.error });
   }
 
+  const parsedPlayers = parseResult.players;
+  console.log(`[upload] ${filename}: parse OK, ${parsedPlayers.length} players`);
+
+  // Step 5: insert into database
+  console.log(`[upload] Step 5: inserting ${parsedPlayers.length} player records...`);
+  let insertedCount = 0;
   for (const playerData of parsedPlayers) {
-    db.insertReplay(playerData);
+    try {
+      const result = db.insertReplay(playerData);
+      console.log(`[upload]   inserted ${playerData.toonHandle} (${playerData.hero}) — changes=${result.changes}`);
+      insertedCount += result.changes;
+    } catch (err) {
+      console.error(`[upload]   insert FAILED for ${playerData.toonHandle}: ${err.message}`);
+    }
   }
-  db.markFileProcessed(filename);
+  console.log(`[upload] ${filename}: ${insertedCount}/${parsedPlayers.length} rows inserted`);
 
+  // Step 6: mark as processed
+  db.markFileProcessed(filename);
+  console.log(`[upload] Step 6: marked as processed`);
+
+  // Step 7: broadcast to WebSocket clients
   for (const p of parsedPlayers) {
     broadcast({
       type: 'new_game',
@@ -147,8 +198,10 @@ function processReplayFile(filename, filePath, res) {
       },
     });
   }
+  console.log(`[upload] Step 7: broadcast sent`);
+  console.log(`[upload] === Done ${filename} ===`);
 
-  res.json({ status: 'ok', filename, parsed: true });
+  res.json({ status: 'ok', filename, parsed: true, players: insertedCount });
 }
 
 // Multipart upload (for curl / browser forms)
@@ -168,25 +221,39 @@ router.post('/upload-debug', rawBodyDebug, (req, res) => {
 });
 
 // Raw binary upload (for the Rust client — avoids multipart/busboy issues with proxies)
-// Collect raw body from stream to avoid express.raw() middleware issues with proxies
 router.post('/upload-raw', checkAuth, (req, res) => {
   const filename = req.headers['x-filename'];
   if (!filename || !filename.endsWith('.StormReplay')) {
     return res.status(400).json({ error: 'Missing or invalid X-Filename header.' });
   }
 
+  console.log(`[upload-raw] ${filename}: starting stream collection, content-length=${req.headers['content-length']}, content-type=${req.headers['content-type']}`);
+
   const chunks = [];
-  req.on('data', chunk => chunks.push(chunk));
+  req.on('data', chunk => {
+    chunks.push(chunk);
+  });
   req.on('end', () => {
     const body = Buffer.concat(chunks);
     if (!body.length) {
+      console.warn(`[upload-raw] ${filename}: empty body received`);
       return res.status(400).json({ error: 'Empty request body.' });
     }
 
-    console.log(`[upload-raw] ${filename}: received ${body.length} bytes, content-type=${req.headers['content-type']}`);
+    const magic = body.slice(0, 4).toString('hex');
+    console.log(`[upload-raw] ${filename}: received ${body.length} bytes, magic=${magic}, chunks=${chunks.length}`);
 
+    // Write to temp file
     const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
-    fs.writeFileSync(tempPath, body);
+    try {
+      fs.writeFileSync(tempPath, body);
+      const writtenSize = fs.statSync(tempPath).size;
+      console.log(`[upload-raw] ${filename}: wrote ${writtenSize} bytes to ${tempPath}`);
+    } catch (err) {
+      console.error(`[upload-raw] ${filename}: write failed: ${err.message}`);
+      return res.status(500).json({ error: `File write failed: ${err.message}` });
+    }
+
     processReplayFile(filename, tempPath, res);
   });
   req.on('error', err => {

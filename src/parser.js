@@ -20,29 +20,70 @@ const GAME_MODE_STRINGS = {
 function parseReplay(filePath) {
   const filename = path.basename(filePath);
 
+  // Step 1: verify file exists and is readable
+  let stat;
+  try {
+    stat = fs.statSync(filePath);
+  } catch (err) {
+    const msg = `File stat failed: ${err.message}`;
+    console.warn(`[parser] ${filename}: ${msg}`);
+    return { error: msg };
+  }
+  console.log(`[parser] ${filename}: file exists, ${stat.size} bytes`);
+
+  // Step 2: read first 4 bytes to verify file magic
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(4);
+    fs.readSync(fd, buf, 0, 4, 0);
+    fs.closeSync(fd);
+    console.log(`[parser] ${filename}: magic bytes = ${buf.toString('hex')}`);
+  } catch (err) {
+    console.warn(`[parser] ${filename}: could not read magic bytes: ${err.message}`);
+  }
+
+  // Step 3: call hots-parser
   let result;
   try {
+    console.log(`[parser] ${filename}: calling Parser.processReplay...`);
     result = Parser.processReplay(filePath, { getBMData: false, overrideVerifiedBuild: true });
+    console.log(`[parser] ${filename}: parser returned status=${result.status}`);
   } catch (err) {
-    console.warn(`[parser] Exception parsing ${filename}: ${err.message}`);
-    return null;
+    const msg = `Parser exception: ${err.message}`;
+    console.warn(`[parser] ${filename}: ${msg}`);
+    console.warn(`[parser] ${filename}: stack: ${err.stack}`);
+    return { error: msg };
   }
 
+  // Step 4: check parser status
   if (result.status !== Parser.ReplayStatus.OK) {
-    console.warn(`[parser] Bad status for ${filename}: ${result.status}`);
-    return null;
+    const statusName = Object.entries(Parser.ReplayStatus)
+      .find(([, v]) => v === result.status)?.[0] || 'unknown';
+    const msg = `Bad parser status: ${result.status} (${statusName})`;
+    console.warn(`[parser] ${filename}: ${msg}`);
+    return { error: msg };
   }
 
+  // Step 5: extract match data
+  console.log(`[parser] ${filename}: status OK, extracting match data...`);
   const gameDate = result.match.date instanceof Date
     ? result.match.date.toISOString()
     : String(result.match.date);
   const map = result.match.map;
   const gameMode = GAME_MODE_STRINGS[result.match.mode] || 'Unknown';
   const duration = result.match.length || null;
+  console.log(`[parser] ${filename}: map=${map}, mode=${gameMode}, date=${gameDate}, duration=${duration}`);
+
+  // Step 6: extract player data
+  const playerCount = result.players ? Object.keys(result.players).length : 0;
+  console.log(`[parser] ${filename}: found ${playerCount} players in result`);
 
   const players = [];
   for (const [toonHandle, player] of Object.entries(result.players)) {
-    if (!player || !player.hero) continue;
+    if (!player || !player.hero) {
+      console.log(`[parser] ${filename}: skipping player ${toonHandle} (no hero)`);
+      continue;
+    }
 
     players.push({
       filename,
@@ -58,7 +99,14 @@ function parseReplay(filePath) {
     });
   }
 
-  return players.length > 0 ? players : null;
+  if (players.length === 0) {
+    const msg = `No valid players found (${playerCount} total in replay)`;
+    console.warn(`[parser] ${filename}: ${msg}`);
+    return { error: msg };
+  }
+
+  console.log(`[parser] ${filename}: parsed OK, ${players.length} players extracted`);
+  return { players };
 }
 
 function yieldToEventLoop() {
@@ -75,9 +123,9 @@ async function scanAndParseAll(replayDir, onProgress) {
   let done = 0;
   for (const file of toParse) {
     try {
-      const results = parseReplay(path.join(replayDir, file));
-      if (results) {
-        for (const playerData of results) {
+      const result = parseReplay(path.join(replayDir, file));
+      if (result.players) {
+        for (const playerData of result.players) {
           db.insertReplay(playerData);
         }
       }

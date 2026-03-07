@@ -35,18 +35,18 @@ function onNewReplay(filePath) {
   const filename = path.basename(filePath);
   if (db.isFileProcessed(filename)) return;
 
-  const parsedPlayers = parseReplay(filePath);
-  if (!parsedPlayers) {
+  const result = parseReplay(filePath);
+  if (!result.players) {
     db.markFileProcessed(filename);
     return;
   }
 
-  for (const playerData of parsedPlayers) {
+  for (const playerData of result.players) {
     db.insertReplay(playerData);
   }
   db.markFileProcessed(filename);
 
-  for (const p of parsedPlayers) {
+  for (const p of result.players) {
     broadcast({
       type: 'new_game',
       game: {
