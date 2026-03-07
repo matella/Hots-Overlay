@@ -123,7 +123,7 @@ function checkAuth(req, res, next) {
   res.status(401).json({ error: 'Invalid or missing auth token.' });
 }
 
-function processReplayFile(filename, filePath, res) {
+function processReplayFile(filename, filePath, res, receivedHash) {
   console.log(`[upload] === Processing ${filename} ===`);
   console.log(`[upload] Step 1: checking if replay exists in DB...`);
 
@@ -172,7 +172,7 @@ function processReplayFile(filename, filePath, res) {
     console.warn(`[upload] ${filename}: parse FAILED — ${parseResult.error}`);
     logUploadResult({ filename, parsed: false, destSize, parseError: parseResult.error });
     db.markFileProcessed(filename);
-    return res.json({ status: 'ok', filename, parsed: false, destSize, parseError: parseResult.error });
+    return res.json({ status: 'ok', filename, parsed: false, destSize, parseError: parseResult.error, receivedHash });
   }
 
   const parsedPlayers = parseResult.players;
@@ -218,7 +218,7 @@ function processReplayFile(filename, filePath, res) {
   console.log(`[upload] === Done ${filename} ===`);
 
   logUploadResult({ filename, parsed: true, players: insertedCount });
-  res.json({ status: 'ok', filename, parsed: true, players: insertedCount });
+  res.json({ status: 'ok', filename, parsed: true, players: insertedCount, receivedHash });
 }
 
 // Multipart upload (for curl / browser forms)
@@ -270,7 +270,8 @@ router.post('/upload-raw', checkAuth, (req, res) => {
     }
 
     const magic = body.slice(0, 4).toString('hex');
-    console.log(`[upload-raw] ${filename}: received ${body.length} bytes, magic=${magic}, chunks=${chunks.length}`);
+    const bodyHash = crypto.createHash('sha256').update(body).digest('hex');
+    console.log(`[upload-raw] ${filename}: received ${body.length} bytes, magic=${magic}, chunks=${chunks.length}, sha256=${bodyHash}`);
 
     // Write to temp file
     const tempPath = path.join(config.replayDir, `_upload_${Date.now()}`);
@@ -283,7 +284,7 @@ router.post('/upload-raw', checkAuth, (req, res) => {
       return res.status(500).json({ error: `File write failed: ${err.message}` });
     }
 
-    processReplayFile(filename, tempPath, res);
+    processReplayFile(filename, tempPath, res, bodyHash);
   });
   req.on('error', err => {
     console.error(`[upload-raw] Stream error for ${filename}:`, err.message);
