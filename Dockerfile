@@ -20,6 +20,9 @@ COPY public/ ./public/
 RUN mkdir -p /app/data /app/replays
 
 # Default env vars for Docker (override via Azure App Settings or docker-compose)
+# For Azure: set WEBSITES_ENABLE_APP_SERVICE_STORAGE=true in App Settings,
+# then override REPLAY_DIR=/home/replays and DB_PATH=/home/data/overlay.db
+# so data persists across container restarts.
 ENV PORT=8080
 ENV REPLAY_DIR=/app/replays
 EXPOSE 8080
