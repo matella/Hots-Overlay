@@ -1,7 +1,7 @@
 fn main() {
     // Bake SERVER_URL and AUTH_TOKEN into the binary at compile time
     let server_url = std::env::var("SERVER_URL")
-        .unwrap_or_else(|_| "http://192.168.129.65:3001".to_string());
+        .unwrap_or_else(|_| "https://hots-overlay.azurewebsites.net".to_string());
     let auth_token = std::env::var("AUTH_TOKEN")
         .unwrap_or_else(|_| "your-secret-token".to_string());
 

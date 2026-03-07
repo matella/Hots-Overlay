@@ -151,6 +151,17 @@ function initDatabase() {
       ORDER BY game_date ASC
     `),
 
+    lastNByMode: db.prepare(`
+      SELECT ${REPLAY_COLUMNS} FROM replays
+      WHERE toon_handle = ? AND game_mode = ?
+      ORDER BY game_date DESC LIMIT ?
+    `),
+    lastNAll: db.prepare(`
+      SELECT ${REPLAY_COLUMNS} FROM replays
+      WHERE toon_handle = ?
+      ORDER BY game_date DESC LIMIT ?
+    `),
+
     availableModes: db.prepare(`
       SELECT DISTINCT game_mode FROM replays ORDER BY game_mode
     `),
@@ -219,6 +230,13 @@ function getRecentSessions(toonHandle, limit, mode) {
   }));
 }
 
+function getLastNGames(toonHandle, limit, mode) {
+  const rows = mode === ALL_MODES
+    ? stmts.lastNAll.all(toonHandle, limit)
+    : stmts.lastNByMode.all(toonHandle, mode, limit);
+  return rows.reverse(); // oldest-first for frontend rendering
+}
+
 function getAvailableModes() {
   return stmts.availableModes.all().map(r => r.game_mode);
 }
@@ -245,6 +263,7 @@ module.exports = {
   getTodayGames,
   getSessionGames,
   getRecentSessions,
+  getLastNGames,
   getAvailableModes,
   resolveToonHandle,
   getAvailablePlayers,
