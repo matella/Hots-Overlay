@@ -91,8 +91,10 @@ router.get('/recent', (req, res) => {
   res.json({ games: games.map(formatGame), stats, mode, player });
 });
 
+const BUILD_ID = new Date().toISOString();
+
 router.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', build: BUILD_ID });
 });
 
 // Diagnostic: last N upload results (kept in memory)
