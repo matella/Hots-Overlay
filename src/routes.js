@@ -117,12 +117,12 @@ function processReplayFile(filename, filePath, res) {
   const dest = path.join(config.replayDir, filename);
   if (filePath !== dest) fs.renameSync(filePath, dest);
 
+  const destSize = fs.statSync(dest).size;
   const parsedPlayers = parseReplay(dest);
   if (!parsedPlayers) {
-    const size = fs.statSync(dest).size;
-    console.warn(`[upload] Parse failed for ${filename} (${size} bytes)`);
+    console.warn(`[upload] Parse failed for ${filename} (${destSize} bytes on disk)`);
     db.markFileProcessed(filename);
-    return res.json({ status: 'ok', filename, parsed: false });
+    return res.json({ status: 'ok', filename, parsed: false, destSize });
   }
 
   for (const playerData of parsedPlayers) {
