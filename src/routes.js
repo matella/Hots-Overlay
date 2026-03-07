@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
@@ -232,6 +233,18 @@ router.post('/upload-debug', rawBodyDebug, (req, res) => {
   const len = req.body ? req.body.length : 0;
   const first4 = req.body ? req.body.slice(0, 4).toString('hex') : 'none';
   res.json({ receivedBytes: len, first4hex: first4, contentType: req.headers['content-type'] });
+});
+
+// Diagnostic: compare file hash on disk with expected hash
+router.get('/file-hash/:filename', checkAuth, (req, res) => {
+  const filePath = path.join(config.replayDir, req.params.filename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  const data = fs.readFileSync(filePath);
+  const hash = crypto.createHash('sha256').update(data).digest('hex');
+  const magic = data.slice(0, 16).toString('hex');
+  res.json({ filename: req.params.filename, size: data.length, sha256: hash, first16hex: magic });
 });
 
 // Raw binary upload (for the Rust client — avoids multipart/busboy issues with proxies)
