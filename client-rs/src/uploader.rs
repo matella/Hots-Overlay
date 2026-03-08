@@ -187,17 +187,20 @@ pub async fn scan_and_upload(
 ) {
     {
         let mut s = state.lock().unwrap();
-        if !s.server_connected || s.scanning {
+        if !s.server_connected {
             return;
         }
-        s.scanning = true;
+        s.scanning += 1;
     }
 
     let entries = match std::fs::read_dir(replay_dir) {
         Ok(e) => e,
         Err(e) => {
             eprintln!("Failed to read replay dir: {}", e);
-            state.lock().unwrap().scanning = false;
+            {
+                let mut s = state.lock().unwrap();
+                s.scanning = s.scanning.saturating_sub(1);
+            }
             return;
         }
     };
@@ -228,7 +231,10 @@ pub async fn scan_and_upload(
     }
 
     if candidates.is_empty() {
-        state.lock().unwrap().scanning = false;
+        {
+            let mut s = state.lock().unwrap();
+            s.scanning = s.scanning.saturating_sub(1);
+        }
         return;
     }
 
@@ -291,7 +297,7 @@ pub async fn scan_and_upload(
     {
         let mut s = state.lock().unwrap();
         s.bulk_progress = None;
-        s.scanning = false;
+        s.scanning = s.scanning.saturating_sub(1);
         s.request_repaint();
     }
     let _ = tx.send(AppEvent::BulkDone);

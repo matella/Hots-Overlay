@@ -1,3 +1,4 @@
+use crate::detector;
 use crate::settings;
 use crate::state::{
     AppEvent, EventReceiver, EventSender, SharedState, UploadStatus, WatcherStatus,
@@ -37,17 +38,29 @@ enum Panel {
     ObsSetup,
 }
 
+#[derive(PartialEq)]
+enum AppScreen {
+    Onboarding,
+    Main,
+}
+
 pub struct ReplayApp {
     state: SharedState,
     tx: EventSender,
     rx: Arc<Mutex<EventReceiver>>,
     runtime: tokio::runtime::Handle,
 
+    // Screen state
+    screen: AppScreen,
+
     // GUI state
     active_panel: Panel,
-    settings_replay_dir: String,
+    settings_replay_dirs: Vec<String>,
     save_message: Option<(String, bool, Instant)>,
-    watcher_handle: Option<WatcherHandle>,
+    watcher_handles: Vec<WatcherHandle>,
+
+    // Onboarding state
+    onboarding_dirs: Vec<(String, bool)>, // (path, selected)
 
     // OBS Setup state
     obs_mode: usize, // 0=Storm League, 1=Custom/Scrims, 2=All
@@ -57,6 +70,7 @@ pub struct ReplayApp {
     obs_selected: Vec<(String, String)>, // selected players (toon, name)
     obs_picker_open: bool,
     obs_search: String,
+    obs_align: usize, // 0=Left, 1=Right
 }
 
 impl ReplayApp {
@@ -65,11 +79,23 @@ impl ReplayApp {
         tx: EventSender,
         rx: EventReceiver,
         runtime: tokio::runtime::Handle,
-        watcher_handle: Option<WatcherHandle>,
+        watcher_handles: Vec<WatcherHandle>,
     ) -> Self {
-        let replay_dir = {
+        let replay_dirs = {
             let s = state.lock().unwrap();
-            s.replay_dir.clone().unwrap_or_default()
+            s.replay_dirs.clone()
+        };
+
+        // Show onboarding if no dirs configured
+        let (screen, onboarding_dirs) = if replay_dirs.is_empty() {
+            let detected = detector::detect_replay_dirs();
+            let dirs: Vec<(String, bool)> = detected
+                .into_iter()
+                .map(|p| (p.to_string_lossy().to_string(), true))
+                .collect();
+            (AppScreen::Onboarding, dirs)
+        } else {
+            (AppScreen::Main, Vec::new())
         };
 
         Self {
@@ -77,10 +103,12 @@ impl ReplayApp {
             tx,
             rx: Arc::new(Mutex::new(rx)),
             runtime,
+            screen,
             active_panel: Panel::None,
-            settings_replay_dir: replay_dir,
+            settings_replay_dirs: replay_dirs,
             save_message: None,
-            watcher_handle,
+            watcher_handles,
+            onboarding_dirs,
             obs_mode: 0,
             obs_all_players: Vec::new(),
             obs_players_loaded: false,
@@ -88,6 +116,7 @@ impl ReplayApp {
             obs_selected: Vec::new(),
             obs_picker_open: false,
             obs_search: String::new(),
+            obs_align: 0,
         }
     }
 
@@ -96,18 +125,18 @@ impl ReplayApp {
         while let Ok(event) = rx.try_recv() {
             match event {
                 AppEvent::ServerConnected => {
-                    // server_connected already set by connectivity check — just trigger rescan
-                    let replay_dir = {
+                    // server_connected already set by connectivity check — rescan all dirs
+                    let replay_dirs = {
                         let s = self.state.lock().unwrap();
-                        s.replay_dir.clone()
+                        s.replay_dirs.clone()
                     };
-                    if let Some(dir) = replay_dir {
-                        let state = self.state.clone();
-                        let tx = self.tx.clone();
-                        self.runtime.spawn(async move {
+                    let state = self.state.clone();
+                    let tx = self.tx.clone();
+                    self.runtime.spawn(async move {
+                        for dir in replay_dirs {
                             uploader::scan_and_upload(&PathBuf::from(dir), &state, &tx).await;
-                        });
-                    }
+                        }
+                    });
                 }
                 AppEvent::ServerDisconnected => {
                     // server_connected already set by connectivity check — nothing else to do
@@ -153,14 +182,14 @@ impl ReplayApp {
     // ── Status bar: single compact row ──────────────────────────────────
     fn render_status_bar(&self, ui: &mut egui::Ui) {
         // Extract state up front so we don't hold the lock during rendering
-        let (server_connected, watcher_status, uploaded_count, replay_dir, is_scanning) = {
+        let (server_connected, watcher_status, uploaded_count, replay_dirs, is_scanning) = {
             let s = self.state.lock().unwrap();
             (
                 s.server_connected,
                 s.watcher_status.clone(),
                 s.uploaded_count,
-                s.replay_dir.clone(),
-                s.bulk_progress.is_some(),
+                s.replay_dirs.clone(),
+                s.scanning > 0,
             )
         };
 
@@ -200,8 +229,8 @@ impl ReplayApp {
 
                 ui.add_space(12.0);
 
-                // Rescan button — disabled if disconnected, no replay dir, or already scanning
-                let can_rescan = replay_dir.is_some() && server_connected && !is_scanning;
+                // Rescan button — disabled if disconnected, no replay dirs, or already scanning
+                let can_rescan = !replay_dirs.is_empty() && server_connected && !is_scanning;
                 let btn = ui.add_enabled(
                     can_rescan,
                     egui::Button::new(
@@ -211,13 +240,14 @@ impl ReplayApp {
                     .min_size(egui::vec2(50.0, 20.0)),
                 );
                 if btn.clicked() {
-                    if let Some(dir) = replay_dir {
-                        let state = self.state.clone();
-                        let tx = self.tx.clone();
-                        self.runtime.spawn(async move {
+                    let dirs = replay_dirs.clone();
+                    let state = self.state.clone();
+                    let tx = self.tx.clone();
+                    self.runtime.spawn(async move {
+                        for dir in dirs {
                             uploader::scan_and_upload(&PathBuf::from(dir), &state, &tx).await;
-                        });
-                    }
+                        }
+                    });
                 }
             });
         });
@@ -369,21 +399,59 @@ impl ReplayApp {
     fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
-        // Replay directory
-        ui.label(egui::RichText::new("Replay Directory").size(11.0).color(TEXT_DIM));
-        ui.add_space(2.0);
+        // Replay directories
+        ui.label(egui::RichText::new("REPLAY DIRECTORIES").size(10.0).color(TEXT_DIM));
+        ui.add_space(4.0);
 
+        // List current directories with remove buttons
+        let mut to_remove = None;
+        for (i, dir) in self.settings_replay_dirs.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(dir)
+                        .size(12.0)
+                        .color(TEXT_BODY)
+                        .family(egui::FontFamily::Monospace),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("✕").size(12.0).color(RED),
+                            )
+                            .fill(egui::Color32::TRANSPARENT)
+                            .min_size(egui::vec2(22.0, 22.0)),
+                        )
+                        .clicked()
+                    {
+                        to_remove = Some(i);
+                    }
+                });
+            });
+        }
+        if let Some(i) = to_remove {
+            self.settings_replay_dirs.remove(i);
+        }
+
+        if self.settings_replay_dirs.is_empty() {
+            ui.label(
+                egui::RichText::new("No directories configured")
+                    .size(11.0)
+                    .color(TEXT_DIM),
+            );
+        }
+
+        ui.add_space(4.0);
+
+        // Add + Save buttons
         ui.horizontal(|ui| {
-            let input = egui::TextEdit::singleline(&mut self.settings_replay_dir)
-                .desired_width(ui.available_width() - 160.0)
-                .font(egui::TextStyle::Monospace);
-            ui.add(input);
-
             if ui
                 .add(
-                    egui::Button::new(egui::RichText::new("Browse").size(12.0).color(TEXT_BODY))
-                        .fill(BORDER)
-                        .min_size(egui::vec2(60.0, 26.0)),
+                    egui::Button::new(
+                        egui::RichText::new("+ Add Directory").size(12.0).color(TEXT_BODY),
+                    )
+                    .fill(BORDER)
+                    .min_size(egui::vec2(120.0, 26.0)),
                 )
                 .clicked()
             {
@@ -391,7 +459,10 @@ impl ReplayApp {
                     .set_title("Select Replay Directory")
                     .pick_folder()
                 {
-                    self.settings_replay_dir = path.to_string_lossy().to_string();
+                    let dir = path.to_string_lossy().to_string();
+                    if !self.settings_replay_dirs.contains(&dir) {
+                        self.settings_replay_dirs.push(dir);
+                    }
                 }
             }
 
@@ -495,17 +566,20 @@ impl ReplayApp {
                     }
                 }
 
-                // Fall back to extracting toon handle from replay directory path
+                // Fall back to extracting toon handles from replay directory paths
                 // Typical path: .../Accounts/<id>/<toon_handle>/Replays/Multiplayer
                 if !found {
-                    let replay_dir = &self.settings_replay_dir;
-                    for component in std::path::Path::new(replay_dir).components() {
-                        let part = component.as_os_str().to_string_lossy();
-                        // Toon handles look like "2-Hero-1-12345" (digit-text-digit-digits)
-                        if part.len() > 3 && part.as_bytes()[0].is_ascii_digit() && part.contains('-') {
-                            if let Some(p) = players.iter().find(|(t, _)| t == part.as_ref()) {
-                                self.obs_selected.push(p.clone());
-                                break;
+                    for replay_dir in &self.settings_replay_dirs {
+                        for component in std::path::Path::new(replay_dir).components() {
+                            let part = component.as_os_str().to_string_lossy();
+                            // Toon handles look like "2-Hero-1-12345" (digit-text-digit-digits)
+                            if part.len() > 3 && part.as_bytes()[0].is_ascii_digit() && part.contains('-') {
+                                if let Some(p) = players.iter().find(|(t, _)| t == part.as_ref()) {
+                                    if !self.obs_selected.iter().any(|(t, _)| t == &p.0) {
+                                        self.obs_selected.push(p.clone());
+                                    }
+                                    break; // Move to next dir
+                                }
                             }
                         }
                     }
@@ -592,6 +666,30 @@ impl ReplayApp {
 
         ui.add_space(8.0);
 
+        // Alignment selector
+        ui.label(egui::RichText::new("ALIGNMENT").size(10.0).color(TEXT_DIM));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let aligns = ["Left", "Right"];
+            for (i, label) in aligns.iter().enumerate() {
+                let selected = self.obs_align == i;
+                let btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(*label)
+                            .size(12.0)
+                            .color(if selected { egui::Color32::WHITE } else { TEXT_SECONDARY }),
+                    )
+                    .fill(if selected { BLUE } else { BORDER })
+                    .min_size(egui::vec2(90.0, 26.0)),
+                );
+                if btn.clicked() {
+                    self.obs_align = i;
+                }
+            }
+        });
+
+        ui.add_space(8.0);
+
         // Build OBS URL
         let mode_param = match self.obs_mode {
             0 => "storm+league",
@@ -606,6 +704,9 @@ impl ReplayApp {
         let mut obs_url = format!("{}?mode={}", server_url, mode_param);
         if !selected_toons.is_empty() {
             obs_url.push_str(&format!("&player={}", selected_toons.join(",")));
+        }
+        if self.obs_align == 1 {
+            obs_url.push_str("&align=right");
         }
 
         // OBS URL
@@ -648,28 +749,29 @@ impl ReplayApp {
     }
 
     fn save_settings(&mut self) {
-        let dir = self.settings_replay_dir.trim().to_string();
+        // Validate all directories
+        let valid_dirs: Vec<String> = self.settings_replay_dirs.iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
 
-        if dir.is_empty() {
+        let mut invalid = Vec::new();
+        for dir in &valid_dirs {
+            if !PathBuf::from(dir).is_dir() {
+                invalid.push(dir.clone());
+            }
+        }
+
+        if !invalid.is_empty() {
             self.save_message = Some((
-                "Please enter a replay directory path.".to_string(),
+                format!("Directory not found: {}", invalid[0]),
                 false,
                 Instant::now(),
             ));
             return;
         }
 
-        let path = PathBuf::from(&dir);
-        if !path.is_dir() {
-            self.save_message = Some((
-                format!("Directory does not exist: {}", dir),
-                false,
-                Instant::now(),
-            ));
-            return;
-        }
-
-        if let Err(e) = settings::save(&dir) {
+        if let Err(e) = settings::save_dirs(&valid_dirs) {
             self.save_message = Some((format!("Failed to save: {}", e), false, Instant::now()));
             return;
         }
@@ -677,40 +779,259 @@ impl ReplayApp {
         // Update shared state
         {
             let mut s = self.state.lock().unwrap();
-            s.replay_dir = Some(dir.clone());
+            s.replay_dirs = valid_dirs.clone();
         }
 
-        // Restart watcher
-        if let Some(handle) = self.watcher_handle.take() {
+        // Stop all old watchers
+        for handle in self.watcher_handles.drain(..) {
             handle.stop();
-            self.state.lock().unwrap().watcher_status = WatcherStatus::Stopped;
+        }
+        self.state.lock().unwrap().watcher_status = WatcherStatus::Stopped;
+
+        // Start new watcher + scan for each dir
+        let mut any_started = false;
+        let mut watcher_errors = Vec::new();
+        for dir in &valid_dirs {
+            match watcher::start_watcher(
+                dir,
+                self.state.clone(),
+                self.tx.clone(),
+                self.runtime.clone(),
+            ) {
+                Ok(handle) => {
+                    self.watcher_handles.push(handle);
+                    any_started = true;
+                }
+                Err(e) => {
+                    watcher_errors.push(e);
+                }
+            }
         }
 
-        match watcher::start_watcher(
-            &dir,
-            self.state.clone(),
-            self.tx.clone(),
-            self.runtime.clone(),
-        ) {
-            Ok(handle) => {
-                self.watcher_handle = Some(handle);
-            }
-            Err(e) => {
-                self.state.lock().unwrap().watcher_status = WatcherStatus::Error(e.clone());
-                self.save_message = Some((format!("Watcher error: {}", e), false, Instant::now()));
-                return;
+        // Scan all dirs sequentially in one background task
+        {
+            let scan_dirs = valid_dirs.clone();
+            let state = self.state.clone();
+            let tx = self.tx.clone();
+            self.runtime.spawn(async move {
+                for dir in scan_dirs {
+                    uploader::scan_and_upload(&PathBuf::from(dir), &state, &tx).await;
+                }
+            });
+        }
+
+        if any_started {
+            self.state.lock().unwrap().watcher_status = WatcherStatus::Watching;
+        }
+
+        self.settings_replay_dirs = valid_dirs;
+        if watcher_errors.is_empty() {
+            self.save_message = Some(("Settings saved.".to_string(), true, Instant::now()));
+        } else {
+            self.save_message = Some((
+                format!("Saved, but watcher failed: {}", watcher_errors.join("; ")),
+                false,
+                Instant::now(),
+            ));
+        }
+    }
+
+    // ── Onboarding screen ─────────────────────────────────────────────
+    fn render_onboarding(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(BG_DARK)
+                    .inner_margin(egui::Margin::same(0)),
+            )
+            .show(ctx, |ui| {
+                // Center content vertically
+                let avail = ui.available_size();
+                ui.add_space((avail.y * 0.15).max(20.0));
+
+                ui.vertical_centered(|ui| {
+                    ui.set_max_width(500.0);
+
+                    ui.label(
+                        egui::RichText::new("Welcome to HotS Replay Client")
+                            .size(22.0)
+                            .strong()
+                            .color(TEXT_PRIMARY),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("Select your replay folders to get started")
+                            .size(14.0)
+                            .color(TEXT_SECONDARY),
+                    );
+                    ui.add_space(20.0);
+
+                    if self.onboarding_dirs.is_empty() {
+                        // No dirs detected
+                        egui::Frame::new()
+                            .fill(BG_PANEL)
+                            .stroke(egui::Stroke::new(1.0, BORDER))
+                            .corner_radius(8.0)
+                            .inner_margin(egui::Margin::symmetric(16, 12))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new("No Heroes of the Storm installation detected.")
+                                        .size(13.0)
+                                        .color(AMBER),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new("Use the Browse button below to add your replay folder manually.")
+                                        .size(12.0)
+                                        .color(TEXT_SECONDARY),
+                                );
+                            });
+                    } else {
+                        // Show detected dirs with checkboxes
+                        ui.label(
+                            egui::RichText::new("DETECTED REPLAY FOLDERS")
+                                .size(10.0)
+                                .color(TEXT_DIM),
+                        );
+                        ui.add_space(6.0);
+
+                        egui::Frame::new()
+                            .fill(BG_PANEL)
+                            .stroke(egui::Stroke::new(1.0, BORDER))
+                            .corner_radius(8.0)
+                            .inner_margin(egui::Margin::symmetric(12, 8))
+                            .show(ui, |ui| {
+                                for (path, selected) in &mut self.onboarding_dirs {
+                                    ui.horizontal(|ui| {
+                                        ui.checkbox(selected, "");
+                                        ui.label(
+                                            egui::RichText::new(path.as_str())
+                                                .size(12.0)
+                                                .color(TEXT_BODY)
+                                                .family(egui::FontFamily::Monospace),
+                                        );
+                                    });
+                                }
+                            });
+                    }
+
+                    ui.add_space(12.0);
+
+                    // Browse + Start buttons
+                    ui.horizontal(|ui| {
+                        // Center the buttons
+                        let total_width = 140.0 + 8.0 + 100.0;
+                        ui.add_space((ui.available_width() - total_width) / 2.0);
+
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("+ Browse").size(13.0).color(TEXT_BODY),
+                                )
+                                .fill(BORDER)
+                                .min_size(egui::vec2(140.0, 32.0)),
+                            )
+                            .clicked()
+                        {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .set_title("Select Replay Directory")
+                                .pick_folder()
+                            {
+                                let dir = path.to_string_lossy().to_string();
+                                if !self.onboarding_dirs.iter().any(|(p, _)| p == &dir) {
+                                    self.onboarding_dirs.push((dir, true));
+                                }
+                            }
+                        }
+
+                        let has_selected = self.onboarding_dirs.iter().any(|(_, sel)| *sel);
+                        let start_btn = ui.add_enabled(
+                            has_selected,
+                            egui::Button::new(
+                                egui::RichText::new("Start")
+                                    .size(13.0)
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(if has_selected { BLUE } else { BORDER })
+                            .min_size(egui::vec2(100.0, 32.0)),
+                        );
+
+                        if start_btn.clicked() {
+                            self.finish_onboarding();
+                        }
+                    });
+
+                    ui.add_space(8.0);
+
+                    // Skip link for users who want to configure later
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("Skip for now").size(11.0).color(TEXT_DIM),
+                            )
+                            .frame(false),
+                        )
+                        .clicked()
+                    {
+                        self.screen = AppScreen::Main;
+                    }
+                });
+            });
+    }
+
+    fn finish_onboarding(&mut self) {
+        let selected_dirs: Vec<String> = self.onboarding_dirs.iter()
+            .filter(|(_, sel)| *sel)
+            .map(|(path, _)| path.clone())
+            .filter(|d| PathBuf::from(d).is_dir())
+            .collect();
+
+        // Save to settings
+        if let Err(e) = settings::save_dirs(&selected_dirs) {
+            eprintln!("Failed to save settings: {}", e);
+        }
+
+        // Update shared state
+        {
+            let mut s = self.state.lock().unwrap();
+            s.replay_dirs = selected_dirs.clone();
+        }
+
+        // Start watchers
+        for dir in &selected_dirs {
+            match watcher::start_watcher(
+                dir,
+                self.state.clone(),
+                self.tx.clone(),
+                self.runtime.clone(),
+            ) {
+                Ok(handle) => {
+                    self.watcher_handles.push(handle);
+                }
+                Err(e) => {
+                    eprintln!("Watcher error for {}: {}", dir, e);
+                }
             }
         }
 
-        // Scan in background
-        let state = self.state.clone();
-        let tx = self.tx.clone();
-        let dir_clone = dir.clone();
-        self.runtime.spawn(async move {
-            uploader::scan_and_upload(&PathBuf::from(dir_clone), &state, &tx).await;
-        });
+        if !self.watcher_handles.is_empty() {
+            self.state.lock().unwrap().watcher_status = WatcherStatus::Watching;
+        }
 
-        self.save_message = Some(("Settings saved.".to_string(), true, Instant::now()));
+        // Scan all dirs sequentially in one background task
+        {
+            let scan_dirs = selected_dirs.clone();
+            let state = self.state.clone();
+            let tx = self.tx.clone();
+            self.runtime.spawn(async move {
+                for dir in scan_dirs {
+                    uploader::scan_and_upload(&PathBuf::from(dir), &state, &tx).await;
+                }
+            });
+        }
+
+        self.settings_replay_dirs = selected_dirs;
+        self.screen = AppScreen::Main;
     }
 }
 
@@ -750,6 +1071,12 @@ impl eframe::App for ReplayApp {
         visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT_SECONDARY);
         visuals.selection.bg_fill = BLUE;
         ctx.set_visuals(visuals);
+
+        // ── Screen branching ────────────────────────────────────────────
+        if self.screen == AppScreen::Onboarding {
+            self.render_onboarding(ctx);
+            return;
+        }
 
         // ── Header ──────────────────────────────────────────────────────
         egui::TopBottomPanel::top("header")
@@ -803,7 +1130,7 @@ impl eframe::App for ReplayApp {
                             } else {
                                 self.active_panel = Panel::Settings;
                                 let s = self.state.lock().unwrap();
-                                self.settings_replay_dir = s.replay_dir.clone().unwrap_or_default();
+                                self.settings_replay_dirs = s.replay_dirs.clone();
                             }
                         }
 

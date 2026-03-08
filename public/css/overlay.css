@@ -91,6 +91,21 @@ body {
 }
 
 @keyframes slideIn {
+  from { transform: translateX(-30px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Right alignment (for OBS scenes with overlay on the right edge) */
+#overlay.align-right {
+  align-items: flex-end;
+}
+#overlay.align-right #game-row {
+  flex-direction: row-reverse;
+}
+#overlay.align-right .game-tile.new {
+  animation: slideInRight 0.4s ease-out;
+}
+@keyframes slideInRight {
   from { transform: translateX(30px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }

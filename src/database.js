@@ -185,7 +185,7 @@ function getTodayGames(toonHandles, mode) {
   return queryGames(
     toonHandles, mode,
     [{ sql: "date(game_date) = date('now', 'localtime')", values: [] }],
-    [], ' ORDER BY game_date ASC',
+    [], ' ORDER BY game_date DESC',
   );
 }
 
@@ -193,7 +193,7 @@ function getSessionGames(toonHandles, date, mode) {
   return queryGames(
     toonHandles, mode,
     [{ sql: 'date(game_date) = ?', values: [date] }],
-    [], ' ORDER BY game_date ASC',
+    [], ' ORDER BY game_date DESC',
   );
 }
 
@@ -225,7 +225,7 @@ function getRecentSessions(toonHandles, limit, mode) {
   const rows = queryGames(
     toonHandles, mode,
     [{ sql: `date(game_date) IN (${datePlaceholders})`, values: dates }],
-    [], ' ORDER BY game_date ASC',
+    [], ' ORDER BY game_date DESC',
   );
 
   // Group by session_date manually
@@ -244,11 +244,10 @@ function getRecentSessions(toonHandles, limit, mode) {
 }
 
 function getLastNGames(toonHandles, limit, mode) {
-  const rows = queryGames(
+  return queryGames(
     toonHandles, mode,
     [], [limit], ' ORDER BY game_date DESC LIMIT ?',
   );
-  return rows.reverse(); // oldest-first for frontend rendering
 }
 
 function getAvailableModes() {

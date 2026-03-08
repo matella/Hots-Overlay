@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod detector;
 mod settings;
 mod state;
 mod tray;
@@ -19,17 +20,14 @@ fn main() {
     let uploaded = settings::load_uploaded();
 
     println!("Server URL: {}", cfg.server_url);
-    println!(
-        "Replay dir: {}",
-        cfg.replay_dir.as_deref().unwrap_or("(not set)")
-    );
+    println!("Replay dirs: {:?}", cfg.replay_dirs);
     println!("Uploaded count: {}", uploaded.len());
 
     // Create shared state
     let state: SharedState = Arc::new(Mutex::new(AppState::new(
         cfg.server_url.clone(),
         cfg.auth_token.clone(),
-        cfg.replay_dir.clone(),
+        cfg.replay_dirs.clone(),
         uploaded,
     )));
 
@@ -51,35 +49,42 @@ fn main() {
     // Check for updates
     updater::check_for_update(state.clone(), rt_handle.clone());
 
-    // Start watcher + scan if replay dir is configured
-    let watcher_handle = if let Some(ref dir) = cfg.replay_dir {
+    // Start watcher for each replay directory
+    let mut watcher_handles = Vec::new();
+    let mut scan_dirs = Vec::new();
+    for dir in &cfg.replay_dirs {
         let dir_path = PathBuf::from(dir);
         if dir_path.is_dir() {
             match watcher::start_watcher(dir, state.clone(), tx.clone(), rt_handle.clone()) {
                 Ok(handle) => {
-                    // Scan in background
-                    let state_bg = state.clone();
-                    let tx_bg = tx.clone();
-                    let dir_bg = dir.clone();
-                    rt_handle.spawn(async move {
-                        uploader::scan_and_upload(&PathBuf::from(dir_bg), &state_bg, &tx_bg).await;
-                    });
-                    Some(handle)
+                    scan_dirs.push(dir.clone());
+                    watcher_handles.push(handle);
                 }
                 Err(e) => {
-                    eprintln!("Failed to start watcher: {}", e);
-                    let mut s = state.lock().unwrap();
-                    s.watcher_status = state::WatcherStatus::Error(e);
-                    None
+                    eprintln!("Failed to start watcher for {}: {}", dir, e);
                 }
             }
         } else {
             eprintln!("Replay directory does not exist: {}", dir);
-            None
         }
-    } else {
-        None
-    };
+    }
+
+    // Scan all dirs sequentially in one background task
+    if !scan_dirs.is_empty() {
+        let state_bg = state.clone();
+        let tx_bg = tx.clone();
+        rt_handle.spawn(async move {
+            for dir in scan_dirs {
+                uploader::scan_and_upload(&PathBuf::from(dir), &state_bg, &tx_bg).await;
+            }
+        });
+    }
+
+    // Set aggregate watcher status
+    if !watcher_handles.is_empty() {
+        let mut s = state.lock().unwrap();
+        s.watcher_status = state::WatcherStatus::Watching;
+    }
 
     // Create system tray
     let _tray_icon = tray::create_tray();
@@ -107,7 +112,7 @@ fn main() {
                 tx_gui,
                 rx,
                 rt_gui,
-                watcher_handle,
+                watcher_handles,
             )))
         }),
     )

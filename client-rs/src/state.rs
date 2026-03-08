@@ -67,14 +67,14 @@ pub struct AppState {
 
     // Watcher
     pub watcher_status: WatcherStatus,
-    pub replay_dir: Option<String>,
+    pub replay_dirs: Vec<String>,
 
     // Uploads
     pub uploaded: HashSet<String>,
     pub uploaded_count: usize,
     pub recent_uploads: VecDeque<LogEntry>,
     pub bulk_progress: Option<BulkProgress>,
-    pub scanning: bool,
+    pub scanning: usize,
 
     // Update check
     pub update_available: Option<(String, String)>, // (version, release_url)
@@ -87,7 +87,7 @@ impl AppState {
     pub fn new(
         server_url: String,
         auth_token: Option<String>,
-        replay_dir: Option<String>,
+        replay_dirs: Vec<String>,
         uploaded: HashSet<String>,
     ) -> Self {
         let uploaded_count = uploaded.len();
@@ -96,12 +96,12 @@ impl AppState {
             auth_token,
             server_connected: false,
             watcher_status: WatcherStatus::Stopped,
-            replay_dir,
+            replay_dirs,
             uploaded,
             uploaded_count,
             recent_uploads: VecDeque::new(),
             bulk_progress: None,
-            scanning: false,
+            scanning: 0,
             update_available: None,
             ctx: None,
         }

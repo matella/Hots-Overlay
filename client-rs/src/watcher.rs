@@ -1,4 +1,4 @@
-use crate::state::{AppEvent, EventSender, SharedState, WatcherStatus};
+use crate::state::{AppEvent, EventSender, SharedState};
 use crate::uploader;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashMap;
@@ -98,12 +98,6 @@ pub fn start_watcher(
         .watch(&dir, RecursiveMode::NonRecursive)
         .map_err(|e| format!("Failed to watch directory: {}", e))?;
 
-    {
-        let mut s = state.lock().unwrap();
-        s.watcher_status = WatcherStatus::Watching;
-        s.replay_dir = Some(replay_dir.to_string());
-        s.request_repaint();
-    }
     let _ = tx.send(AppEvent::WatcherStarted);
     println!("Watching: {}", replay_dir);
 

@@ -14,6 +14,10 @@ pub struct SettingsFile {
     pub server_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_token: Option<String>,
+    // New multi-dir field
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay_dirs: Option<Vec<String>>,
+    // Legacy single-dir field (read-only for migration)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay_dir: Option<String>,
 }
@@ -23,7 +27,7 @@ pub struct SettingsFile {
 pub struct Settings {
     pub server_url: String,
     pub auth_token: Option<String>,
-    pub replay_dir: Option<String>,
+    pub replay_dirs: Vec<String>,
 }
 
 /// Returns the data directory for this app.
@@ -69,23 +73,32 @@ pub fn load() -> Settings {
         Some(auth_token_raw)
     };
 
-    let replay_dir = std::env::var("REPLAY_DIR")
-        .ok()
-        .or(file_settings.replay_dir);
+    // Replay dirs: env > file.replay_dirs > legacy file.replay_dir > empty
+    let replay_dirs = if let Ok(env_dir) = std::env::var("REPLAY_DIR") {
+        vec![env_dir]
+    } else if let Some(dirs) = file_settings.replay_dirs {
+        dirs
+    } else if let Some(dir) = file_settings.replay_dir {
+        // Legacy migration: single dir -> vec
+        vec![dir]
+    } else {
+        Vec::new()
+    };
 
     Settings {
         server_url,
         auth_token,
-        replay_dir,
+        replay_dirs,
     }
 }
 
-/// Save replay directory to settings.json (server_url and auth_token are build-time constants)
-pub fn save(replay_dir: &str) -> Result<(), String> {
+/// Save replay directories to settings.json (server_url and auth_token are build-time constants)
+pub fn save_dirs(dirs: &[String]) -> Result<(), String> {
     let file_settings = SettingsFile {
         server_url: None,
         auth_token: None,
-        replay_dir: if replay_dir.is_empty() { None } else { Some(replay_dir.to_string()) },
+        replay_dirs: if dirs.is_empty() { None } else { Some(dirs.to_vec()) },
+        replay_dir: None, // Don't write legacy field
     };
 
     let json = serde_json::to_string_pretty(&file_settings)

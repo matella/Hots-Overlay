@@ -54,7 +54,7 @@
   function renderGames(games) {
     const row = document.getElementById('game-row');
     while (row.firstChild) row.removeChild(row.firstChild);
-    const visible = games.slice(-MAX_TILES);
+    const visible = games.slice(0, MAX_TILES);
     for (const game of visible) {
       row.appendChild(createTile(game, false));
     }
@@ -62,9 +62,9 @@
 
   function addGame(game) {
     const row = document.getElementById('game-row');
-    row.appendChild(createTile(game, true));
+    row.insertBefore(createTile(game, true), row.firstChild);
     while (row.children.length > MAX_TILES) {
-      row.removeChild(row.firstChild);
+      row.removeChild(row.lastChild);
     }
   }
 
@@ -125,6 +125,12 @@
     const params = new URLSearchParams(window.location.search);
     currentPlayer = params.get('player') || null;
     currentView = params.get('view') === 'recent' ? 'recent' : 'today';
+
+    // Alignment: ?align=right pins overlay to right side
+    const align = params.get('align');
+    if (align === 'right') {
+      document.getElementById('overlay').classList.add('align-right');
+    }
 
     try {
       const modesData = await (await fetch('/api/modes')).json();
