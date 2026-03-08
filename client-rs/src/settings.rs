@@ -80,11 +80,11 @@ pub fn load() -> Settings {
     }
 }
 
-/// Save all settings to settings.json
-pub fn save(server_url: &str, auth_token: &str, replay_dir: &str) -> Result<(), String> {
+/// Save replay directory to settings.json (server_url and auth_token are build-time constants)
+pub fn save(replay_dir: &str) -> Result<(), String> {
     let file_settings = SettingsFile {
-        server_url: if server_url.is_empty() { None } else { Some(server_url.to_string()) },
-        auth_token: if auth_token.is_empty() { None } else { Some(auth_token.to_string()) },
+        server_url: None,
+        auth_token: None,
         replay_dir: if replay_dir.is_empty() { None } else { Some(replay_dir.to_string()) },
     };
 

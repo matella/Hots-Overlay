@@ -45,8 +45,6 @@ pub struct ReplayApp {
 
     // GUI state
     active_panel: Panel,
-    settings_server_url: String,
-    settings_auth_token: String,
     settings_replay_dir: String,
     save_message: Option<(String, bool, Instant)>,
     watcher_handle: Option<WatcherHandle>,
@@ -69,13 +67,9 @@ impl ReplayApp {
         runtime: tokio::runtime::Handle,
         watcher_handle: Option<WatcherHandle>,
     ) -> Self {
-        let (replay_dir, server_url, auth_token) = {
+        let replay_dir = {
             let s = state.lock().unwrap();
-            (
-                s.replay_dir.clone().unwrap_or_default(),
-                s.server_url.clone(),
-                s.auth_token.clone().unwrap_or_default(),
-            )
+            s.replay_dir.clone().unwrap_or_default()
         };
 
         Self {
@@ -84,8 +78,6 @@ impl ReplayApp {
             rx: Arc::new(Mutex::new(rx)),
             runtime,
             active_panel: Panel::None,
-            settings_server_url: server_url,
-            settings_auth_token: auth_token,
             settings_replay_dir: replay_dir,
             save_message: None,
             watcher_handle,
@@ -377,29 +369,6 @@ impl ReplayApp {
     fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
-        // Server URL
-        ui.label(egui::RichText::new("Server URL").size(11.0).color(TEXT_DIM));
-        ui.add_space(2.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings_server_url)
-                .desired_width(ui.available_width())
-                .font(egui::TextStyle::Monospace),
-        );
-
-        ui.add_space(8.0);
-
-        // Auth Token
-        ui.label(egui::RichText::new("Auth Token").size(11.0).color(TEXT_DIM));
-        ui.add_space(2.0);
-        ui.add(
-            egui::TextEdit::singleline(&mut self.settings_auth_token)
-                .desired_width(ui.available_width())
-                .font(egui::TextStyle::Monospace)
-                .password(true),
-        );
-
-        ui.add_space(8.0);
-
         // Replay directory
         ui.label(egui::RichText::new("Replay Directory").size(11.0).color(TEXT_DIM));
         ui.add_space(2.0);
@@ -469,7 +438,10 @@ impl ReplayApp {
         }
         self.obs_players_loaded = true;
 
-        let server_url = self.settings_server_url.trim_end_matches('/').to_string();
+        let server_url = {
+            let s = self.state.lock().unwrap();
+            s.server_url.trim_end_matches('/').to_string()
+        };
         let pending = self.obs_players_pending.clone();
         let ctx = self.state.lock().unwrap().ctx.clone();
 
@@ -546,7 +518,8 @@ impl ReplayApp {
     fn render_obs_setup_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
-        let server_url = self.settings_server_url.trim_end_matches('/');
+        let server_url = self.state.lock().unwrap().server_url.trim_end_matches('/').to_string();
+        let server_url = server_url.as_str();
 
         // Mode selector
         ui.label(egui::RichText::new("OVERLAY MODE").size(10.0).color(TEXT_DIM));
@@ -676,8 +649,6 @@ impl ReplayApp {
 
     fn save_settings(&mut self) {
         let dir = self.settings_replay_dir.trim().to_string();
-        let server = self.settings_server_url.trim().to_string();
-        let token = self.settings_auth_token.trim().to_string();
 
         if dir.is_empty() {
             self.save_message = Some((
@@ -698,31 +669,15 @@ impl ReplayApp {
             return;
         }
 
-        if server.is_empty() {
-            self.save_message = Some((
-                "Please enter a server URL.".to_string(),
-                false,
-                Instant::now(),
-            ));
-            return;
-        }
-
-        if let Err(e) = settings::save(&server, &token, &dir) {
+        if let Err(e) = settings::save(&dir) {
             self.save_message = Some((format!("Failed to save: {}", e), false, Instant::now()));
             return;
         }
 
         // Update shared state
-        let server_changed;
-        let token_changed;
         {
             let mut s = self.state.lock().unwrap();
-            server_changed = s.server_url != server;
-            let new_auth: Option<&str> = if token.is_empty() { None } else { Some(&token) };
-            token_changed = s.auth_token.as_deref() != new_auth;
             s.replay_dir = Some(dir.clone());
-            s.server_url = server;
-            s.auth_token = if token.is_empty() { None } else { Some(token) };
         }
 
         // Restart watcher
@@ -745,13 +700,6 @@ impl ReplayApp {
                 self.save_message = Some((format!("Watcher error: {}", e), false, Instant::now()));
                 return;
             }
-        }
-
-        // If server URL or token changed, force a connectivity recheck
-        if server_changed || token_changed {
-            let mut s = self.state.lock().unwrap();
-            s.server_connected = false;
-            s.request_repaint();
         }
 
         // Scan in background
@@ -856,8 +804,6 @@ impl eframe::App for ReplayApp {
                                 self.active_panel = Panel::Settings;
                                 let s = self.state.lock().unwrap();
                                 self.settings_replay_dir = s.replay_dir.clone().unwrap_or_default();
-                                self.settings_server_url = s.server_url.clone();
-                                self.settings_auth_token = s.auth_token.clone().unwrap_or_default();
                             }
                         }
 
