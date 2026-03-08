@@ -30,6 +30,13 @@ const SUCCESS_TEXT: egui::Color32 = egui::Color32::from_rgb(0x6e, 0xe7, 0xb7);
 const ERROR_BG: egui::Color32 = egui::Color32::from_rgb(0x7f, 0x1d, 0x1d);
 const ERROR_TEXT: egui::Color32 = egui::Color32::from_rgb(0xfc, 0xa5, 0xa5);
 
+#[derive(PartialEq)]
+enum Panel {
+    None,
+    Settings,
+    ObsSetup,
+}
+
 pub struct ReplayApp {
     state: SharedState,
     tx: EventSender,
@@ -37,10 +44,21 @@ pub struct ReplayApp {
     runtime: tokio::runtime::Handle,
 
     // GUI state
-    show_settings: bool,
+    active_panel: Panel,
+    settings_server_url: String,
+    settings_auth_token: String,
     settings_replay_dir: String,
     save_message: Option<(String, bool, Instant)>,
     watcher_handle: Option<WatcherHandle>,
+
+    // OBS Setup state
+    obs_mode: usize, // 0=Storm League, 1=Custom/Scrims, 2=All
+    obs_all_players: Vec<(String, String)>, // (toon_handle, player_name) from server
+    obs_players_loaded: bool,
+    obs_players_pending: Arc<Mutex<Option<(Vec<(String, String)>, Option<String>)>>>,
+    obs_selected: Vec<(String, String)>, // selected players (toon, name)
+    obs_picker_open: bool,
+    obs_search: String,
 }
 
 impl ReplayApp {
@@ -51,22 +69,33 @@ impl ReplayApp {
         runtime: tokio::runtime::Handle,
         watcher_handle: Option<WatcherHandle>,
     ) -> Self {
-        let replay_dir = state
-            .lock()
-            .unwrap()
-            .replay_dir
-            .clone()
-            .unwrap_or_default();
+        let (replay_dir, server_url, auth_token) = {
+            let s = state.lock().unwrap();
+            (
+                s.replay_dir.clone().unwrap_or_default(),
+                s.server_url.clone(),
+                s.auth_token.clone().unwrap_or_default(),
+            )
+        };
 
         Self {
             state,
             tx,
             rx: Arc::new(Mutex::new(rx)),
             runtime,
-            show_settings: false,
+            active_panel: Panel::None,
+            settings_server_url: server_url,
+            settings_auth_token: auth_token,
             settings_replay_dir: replay_dir,
             save_message: None,
             watcher_handle,
+            obs_mode: 0,
+            obs_all_players: Vec::new(),
+            obs_players_loaded: false,
+            obs_players_pending: Arc::new(Mutex::new(None)),
+            obs_selected: Vec::new(),
+            obs_picker_open: false,
+            obs_search: String::new(),
         }
     }
 
@@ -348,9 +377,32 @@ impl ReplayApp {
     fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
+        // Server URL
+        ui.label(egui::RichText::new("Server URL").size(11.0).color(TEXT_DIM));
+        ui.add_space(2.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings_server_url)
+                .desired_width(ui.available_width())
+                .font(egui::TextStyle::Monospace),
+        );
+
+        ui.add_space(8.0);
+
+        // Auth Token
+        ui.label(egui::RichText::new("Auth Token").size(11.0).color(TEXT_DIM));
+        ui.add_space(2.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut self.settings_auth_token)
+                .desired_width(ui.available_width())
+                .font(egui::TextStyle::Monospace)
+                .password(true),
+        );
+
+        ui.add_space(8.0);
+
         // Replay directory
         ui.label(egui::RichText::new("Replay Directory").size(11.0).color(TEXT_DIM));
-        ui.add_space(4.0);
+        ui.add_space(2.0);
 
         ui.horizontal(|ui| {
             let input = egui::TextEdit::singleline(&mut self.settings_replay_dir)
@@ -410,8 +462,223 @@ impl ReplayApp {
         ui.add_space(4.0);
     }
 
+    // ── OBS Setup panel ────────────────────────────────────────────────
+    fn fetch_obs_players(&mut self) {
+        if self.obs_players_loaded {
+            return;
+        }
+        self.obs_players_loaded = true;
+
+        let server_url = self.settings_server_url.trim_end_matches('/').to_string();
+        let pending = self.obs_players_pending.clone();
+        let ctx = self.state.lock().unwrap().ctx.clone();
+
+        self.runtime.spawn(async move {
+            let url = format!("{}/api/players", server_url);
+            let result = tokio::task::spawn_blocking(move || -> Option<(Vec<(String, String)>, Option<String>)> {
+                let agent = ureq::Agent::new_with_config(
+                    ureq::config::Config::builder()
+                        .timeout_global(Some(std::time::Duration::from_secs(10)))
+                        .build(),
+                );
+                let mut resp = agent.get(&url).call().ok()?;
+                let body_str = resp.body_mut().read_to_string().ok()?;
+                let body: serde_json::Value = serde_json::from_str(&body_str).ok()?;
+                let default = body["default"].as_str().map(|s| s.to_string());
+                let players: Vec<(String, String)> = body["players"]
+                    .as_array()?
+                    .iter()
+                    .filter_map(|p| {
+                        let toon = p["toon_handle"].as_str()?.to_string();
+                        let name = p["player_name"].as_str().unwrap_or("").to_string();
+                        Some((toon, name))
+                    })
+                    .collect();
+                Some((players, default))
+            }).await.ok()?;
+
+            if let Some(data) = result {
+                *pending.lock().unwrap() = Some(data);
+                if let Some(ctx) = ctx {
+                    ctx.request_repaint();
+                }
+            }
+
+            Some(())
+        });
+    }
+
+    fn check_obs_players_pending(&mut self) {
+        let data = self.obs_players_pending.lock().unwrap().take();
+        if let Some((players, default_toon)) = data {
+            // Pre-select the default player if none selected yet
+            if self.obs_selected.is_empty() {
+                let mut found = false;
+
+                // Try server-reported default first
+                if let Some(ref default) = default_toon {
+                    if let Some(p) = players.iter().find(|(t, _)| t == default) {
+                        self.obs_selected.push(p.clone());
+                        found = true;
+                    }
+                }
+
+                // Fall back to extracting toon handle from replay directory path
+                // Typical path: .../Accounts/<id>/<toon_handle>/Replays/Multiplayer
+                if !found {
+                    let replay_dir = &self.settings_replay_dir;
+                    for component in std::path::Path::new(replay_dir).components() {
+                        let part = component.as_os_str().to_string_lossy();
+                        // Toon handles look like "2-Hero-1-12345" (digit-text-digit-digits)
+                        if part.len() > 3 && part.as_bytes()[0].is_ascii_digit() && part.contains('-') {
+                            if let Some(p) = players.iter().find(|(t, _)| t == part.as_ref()) {
+                                self.obs_selected.push(p.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            self.obs_all_players = players;
+        }
+    }
+
+    fn render_obs_setup_panel(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+
+        let server_url = self.settings_server_url.trim_end_matches('/');
+
+        // Mode selector
+        ui.label(egui::RichText::new("OVERLAY MODE").size(10.0).color(TEXT_DIM));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let modes = ["Storm League", "Custom", "All"];
+            for (i, label) in modes.iter().enumerate() {
+                let selected = self.obs_mode == i;
+                let btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(*label)
+                            .size(12.0)
+                            .color(if selected { egui::Color32::WHITE } else { TEXT_SECONDARY }),
+                    )
+                    .fill(if selected { BLUE } else { BORDER })
+                    .min_size(egui::vec2(90.0, 26.0)),
+                );
+                if btn.clicked() {
+                    self.obs_mode = i;
+                }
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // Player selector — selected chips + Add button
+        ui.label(egui::RichText::new("PLAYERS").size(10.0).color(TEXT_DIM));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            // Show selected players as removable chips
+            let mut to_remove = None;
+            for (i, (_, name)) in self.obs_selected.iter().enumerate() {
+                let chip_text = if name.is_empty() { &self.obs_selected[i].0 } else { name };
+                let btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("{} x", chip_text))
+                            .size(11.0)
+                            .color(egui::Color32::WHITE),
+                    )
+                    .fill(BLUE)
+                    .corner_radius(12.0)
+                    .min_size(egui::vec2(0.0, 22.0)),
+                );
+                if btn.clicked() {
+                    to_remove = Some(i);
+                }
+            }
+            if let Some(i) = to_remove {
+                self.obs_selected.remove(i);
+            }
+
+            // Add Player button
+            if !self.obs_all_players.is_empty() {
+                let add_btn = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new("+ Add Player").size(11.0).color(TEXT_SECONDARY),
+                    )
+                    .fill(BORDER)
+                    .corner_radius(12.0)
+                    .min_size(egui::vec2(0.0, 22.0)),
+                );
+                if add_btn.clicked() {
+                    self.obs_picker_open = true;
+                    self.obs_search.clear();
+                }
+            } else if !self.obs_players_loaded {
+                ui.label(egui::RichText::new("Loading...").size(11.0).color(TEXT_SECONDARY));
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // Build OBS URL
+        let mode_param = match self.obs_mode {
+            0 => "storm+league",
+            1 => "custom",
+            _ => "all",
+        };
+
+        let selected_toons: Vec<String> = self.obs_selected.iter()
+            .map(|(toon, _)| toon.clone())
+            .collect();
+
+        let mut obs_url = format!("{}?mode={}", server_url, mode_param);
+        if !selected_toons.is_empty() {
+            obs_url.push_str(&format!("&player={}", selected_toons.join(",")));
+        }
+
+        // OBS URL
+        ui.label(egui::RichText::new("OBS BROWSER SOURCE URL").size(10.0).color(TEXT_DIM));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut obs_url.clone())
+                    .desired_width(ui.available_width() - 80.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if ui
+                .add(
+                    egui::Button::new(egui::RichText::new("Copy").size(12.0).color(TEXT_BODY))
+                        .fill(BORDER)
+                        .min_size(egui::vec2(60.0, 26.0)),
+                )
+                .clicked()
+            {
+                ui.ctx().copy_text(obs_url.clone());
+            }
+        });
+
+        ui.add_space(8.0);
+
+        // Instructions
+        ui.label(egui::RichText::new("SETUP INSTRUCTIONS").size(10.0).color(TEXT_DIM));
+        ui.add_space(4.0);
+        let steps = [
+            "1. Select mode and player(s) above",
+            "2. Copy the URL",
+            "3. In OBS, add a Browser Source (800 x 120)",
+            "4. Paste the URL — done!",
+        ];
+        for step in &steps {
+            ui.label(egui::RichText::new(*step).size(11.0).color(TEXT_BODY));
+        }
+
+        ui.add_space(4.0);
+    }
+
     fn save_settings(&mut self) {
         let dir = self.settings_replay_dir.trim().to_string();
+        let server = self.settings_server_url.trim().to_string();
+        let token = self.settings_auth_token.trim().to_string();
+
         if dir.is_empty() {
             self.save_message = Some((
                 "Please enter a replay directory path.".to_string(),
@@ -431,14 +698,31 @@ impl ReplayApp {
             return;
         }
 
-        if let Err(e) = settings::save(&dir) {
+        if server.is_empty() {
+            self.save_message = Some((
+                "Please enter a server URL.".to_string(),
+                false,
+                Instant::now(),
+            ));
+            return;
+        }
+
+        if let Err(e) = settings::save(&server, &token, &dir) {
             self.save_message = Some((format!("Failed to save: {}", e), false, Instant::now()));
             return;
         }
 
+        // Update shared state
+        let server_changed;
+        let token_changed;
         {
             let mut s = self.state.lock().unwrap();
+            server_changed = s.server_url != server;
+            let new_auth: Option<&str> = if token.is_empty() { None } else { Some(&token) };
+            token_changed = s.auth_token.as_deref() != new_auth;
             s.replay_dir = Some(dir.clone());
+            s.server_url = server;
+            s.auth_token = if token.is_empty() { None } else { Some(token) };
         }
 
         // Restart watcher
@@ -461,6 +745,13 @@ impl ReplayApp {
                 self.save_message = Some((format!("Watcher error: {}", e), false, Instant::now()));
                 return;
             }
+        }
+
+        // If server URL or token changed, force a connectivity recheck
+        if server_changed || token_changed {
+            let mut s = self.state.lock().unwrap();
+            s.server_connected = false;
+            s.request_repaint();
         }
 
         // Scan in background
@@ -491,6 +782,7 @@ impl eframe::App for ReplayApp {
         }
 
         self.drain_events();
+        self.check_obs_players_pending();
 
         // Expire save message
         if let Some((_, _, time)) = &self.save_message {
@@ -528,33 +820,74 @@ impl eframe::App for ReplayApp {
                             .color(TEXT_PRIMARY),
                     );
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let btn_text = if self.show_settings {
-                            "Close"
-                        } else {
-                            "Settings"
-                        };
+                    // Update banner
+                    let update_info = self.state.lock().unwrap().update_available.clone();
+                    if let Some((version, url)) = update_info {
+                        ui.add_space(8.0);
                         let btn = ui.add(
                             egui::Button::new(
-                                egui::RichText::new(btn_text).size(12.0).color(TEXT_SECONDARY),
+                                egui::RichText::new(format!("v{} available", version))
+                                    .size(11.0)
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(GREEN)
+                            .min_size(egui::vec2(0.0, 20.0)),
+                        );
+                        if btn.clicked() {
+                            let _ = std::process::Command::new("cmd")
+                                .args(["/C", "start", &url])
+                                .spawn();
+                        }
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Settings button
+                        let settings_text = if self.active_panel == Panel::Settings { "Close" } else { "Settings" };
+                        let settings_btn = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(settings_text).size(12.0).color(TEXT_SECONDARY),
                             )
                             .frame(false),
                         );
-                        if btn.clicked() {
-                            self.show_settings = !self.show_settings;
-                            if self.show_settings {
+                        if settings_btn.clicked() {
+                            if self.active_panel == Panel::Settings {
+                                self.active_panel = Panel::None;
+                            } else {
+                                self.active_panel = Panel::Settings;
                                 let s = self.state.lock().unwrap();
-                                self.settings_replay_dir =
-                                    s.replay_dir.clone().unwrap_or_default();
+                                self.settings_replay_dir = s.replay_dir.clone().unwrap_or_default();
+                                self.settings_server_url = s.server_url.clone();
+                                self.settings_auth_token = s.auth_token.clone().unwrap_or_default();
+                            }
+                        }
+
+                        ui.add_space(8.0);
+
+                        // OBS Setup button
+                        let obs_text = if self.active_panel == Panel::ObsSetup { "Close" } else { "OBS Setup" };
+                        let obs_btn = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(obs_text).size(12.0).color(TEXT_SECONDARY),
+                            )
+                            .frame(false),
+                        );
+                        if obs_btn.clicked() {
+                            if self.active_panel == Panel::ObsSetup {
+                                self.active_panel = Panel::None;
+                            } else {
+                                self.active_panel = Panel::ObsSetup;
+                                // Reset so we re-fetch (handles URL changes + failed fetches)
+                                self.obs_players_loaded = false;
+                                self.fetch_obs_players();
                             }
                         }
                     });
                 });
             });
 
-        // ── Settings panel (bottom, conditional) ────────────────────────
-        if self.show_settings {
-            egui::TopBottomPanel::bottom("settings")
+        // ── Bottom panel (Settings or OBS Setup) ────────────────────────
+        if self.active_panel != Panel::None {
+            egui::TopBottomPanel::bottom("bottom_panel")
                 .frame(
                     egui::Frame::new()
                         .fill(BG_PANEL)
@@ -562,8 +895,107 @@ impl eframe::App for ReplayApp {
                         .stroke(egui::Stroke::new(1.0, BORDER)),
                 )
                 .show(ctx, |ui| {
-                    self.render_settings_panel(ui);
+                    match self.active_panel {
+                        Panel::Settings => self.render_settings_panel(ui),
+                        Panel::ObsSetup => self.render_obs_setup_panel(ui),
+                        Panel::None => {}
+                    }
                 });
+        }
+
+        // ── Player picker popup ─────────────────────────────────────────
+        if self.obs_picker_open {
+            let mut open = true;
+            egui::Window::new("Add Player")
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .fixed_size(egui::vec2(350.0, 300.0))
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .frame(
+                    egui::Frame::new()
+                        .fill(BG_PANEL)
+                        .stroke(egui::Stroke::new(1.0, BORDER))
+                        .corner_radius(8.0)
+                        .inner_margin(egui::Margin::same(12)),
+                )
+                .show(ctx, |ui| {
+                    // Search input
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.obs_search)
+                            .hint_text("Search players...")
+                            .desired_width(ui.available_width())
+                            .font(egui::TextStyle::Monospace),
+                    );
+                    ui.add_space(6.0);
+
+                    // Filter and display matching players
+                    let search_lower = self.obs_search.to_lowercase();
+                    let selected_toons: Vec<String> = self.obs_selected.iter()
+                        .map(|(t, _)| t.clone())
+                        .collect();
+
+                    let filtered: Vec<(String, String)> = self.obs_all_players.iter()
+                        .filter(|(toon, name)| {
+                            // Exclude already selected
+                            if selected_toons.contains(toon) {
+                                return false;
+                            }
+                            if search_lower.is_empty() {
+                                return true;
+                            }
+                            name.to_lowercase().contains(&search_lower)
+                                || toon.to_lowercase().contains(&search_lower)
+                        })
+                        .cloned()
+                        .collect();
+
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if filtered.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("No matching players")
+                                        .size(12.0)
+                                        .color(TEXT_DIM),
+                                );
+                            }
+                            let mut picked = None;
+                            for (i, (toon, name)) in filtered.iter().enumerate() {
+                                let display = if name.is_empty() {
+                                    toon.clone()
+                                } else {
+                                    format!("{} ({})", name, toon)
+                                };
+                                let row_bg = if i % 2 == 0 { BG_PANEL } else { ROW_ALT };
+                                egui::Frame::new()
+                                    .fill(row_bg)
+                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .show(ui, |ui| {
+                                        let resp = ui.add(
+                                            egui::Button::new(
+                                                egui::RichText::new(&display)
+                                                    .size(12.0)
+                                                    .color(TEXT_BODY),
+                                            )
+                                            .fill(row_bg)
+                                            .frame(false)
+                                            .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                        );
+                                        if resp.clicked() {
+                                            picked = Some((toon.clone(), name.clone()));
+                                        }
+                                    });
+                            }
+                            if let Some(player) = picked {
+                                self.obs_selected.push(player);
+                                self.obs_picker_open = false;
+                            }
+                        });
+                });
+            if !open {
+                self.obs_picker_open = false;
+            }
         }
 
         // ── Central area ────────────────────────────────────────────────

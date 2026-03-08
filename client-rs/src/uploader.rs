@@ -316,7 +316,7 @@ pub fn start_connectivity_check(
                 (s.server_url.clone(), s.server_connected)
             };
 
-            let check_url = format!("{}/api/modes", url.trim_end_matches('/'));
+            let check_url = format!("{}/api/health", url.trim_end_matches('/'));
             let agent_c = agent.clone();
             let is_connected = tokio::task::spawn_blocking(move || {
                 agent_c.get(&check_url).call().is_ok()

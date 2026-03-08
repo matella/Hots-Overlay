@@ -5,9 +5,10 @@
   let currentMode = null;
   let currentView = 'today';  // 'today' or 'recent'
   let currentPlayer = null;   // from ?player= URL param (null = server default)
-  let resolvedPlayer = null;  // toon handle resolved by server
+  let resolvedPlayers = null; // toon handle(s) resolved by server (array or null)
   let modeLabels = {};
   let showBadges = false;
+  let showPlayerBadges = false;
 
   function getModeLabel(mode) {
     if (mode === ALL_MODES) return 'All';
@@ -35,7 +36,12 @@
     img.onerror = () => { img.style.display = 'none'; };
     tile.appendChild(img);
 
-    if (showBadges && game.gameMode) {
+    if (showPlayerBadges && game.playerName) {
+      const badge = document.createElement('span');
+      badge.className = 'mode-badge';
+      badge.textContent = game.playerName;
+      tile.appendChild(badge);
+    } else if (showBadges && game.gameMode) {
       const badge = document.createElement('span');
       badge.className = 'mode-badge';
       badge.textContent = getModeLabel(game.gameMode);
@@ -79,8 +85,9 @@
   async function refreshOverlay() {
     try {
       const { games, stats, player } = await fetchData();
-      resolvedPlayer = player;
+      resolvedPlayers = player; // array or null
       showBadges = (currentMode === ALL_MODES);
+      showPlayerBadges = Array.isArray(resolvedPlayers) && resolvedPlayers.length > 1;
       renderGames(games);
       updateStats(stats);
       updateModeLabel();
@@ -99,8 +106,8 @@
       if (data.type === 'new_game') {
         const game = data.game;
 
-        // Filter by player
-        if (resolvedPlayer && game.toonHandle !== resolvedPlayer) return;
+        // Filter by player (resolvedPlayers is an array or null)
+        if (resolvedPlayers && !resolvedPlayers.includes(game.toonHandle)) return;
 
         // Filter by mode
         if (currentMode !== ALL_MODES && game.gameMode !== currentMode) return;
@@ -120,8 +127,7 @@
     currentView = params.get('view') === 'recent' ? 'recent' : 'today';
 
     try {
-      const modesRes = await fetch('/api/modes');
-      const modesData = await modesRes.json();
+      const modesData = await (await fetch('/api/modes')).json();
       modeLabels = modesData.labels || {};
 
       const urlMode = params.get('mode');

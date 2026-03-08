@@ -109,62 +109,6 @@ function initDatabase() {
     isProcessed: db.prepare('SELECT 1 FROM processed_files WHERE filename = ?'),
     markProcessed: db.prepare('INSERT OR IGNORE INTO processed_files (filename) VALUES (?)'),
 
-    todayByMode: db.prepare(`
-      SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE toon_handle = ? AND date(game_date) = date('now', 'localtime') AND game_mode = ?
-      ORDER BY game_date ASC
-    `),
-    todayAll: db.prepare(`
-      SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE toon_handle = ? AND date(game_date) = date('now', 'localtime')
-      ORDER BY game_date ASC
-    `),
-
-    sessionByMode: db.prepare(`
-      SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE toon_handle = ? AND date(game_date) = ? AND game_mode = ?
-      ORDER BY game_date ASC
-    `),
-    sessionAll: db.prepare(`
-      SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE toon_handle = ? AND date(game_date) = ?
-      ORDER BY game_date ASC
-    `),
-
-    recentByMode: db.prepare(`
-      SELECT ${REPLAY_COLUMNS}, date(game_date) AS session_date
-      FROM replays
-      WHERE toon_handle = ? AND game_mode = ?
-        AND date(game_date) IN (
-          SELECT DISTINCT date(game_date)
-          FROM replays WHERE toon_handle = ? AND game_mode = ?
-          ORDER BY date(game_date) DESC LIMIT ?
-        )
-      ORDER BY game_date ASC
-    `),
-    recentAll: db.prepare(`
-      SELECT ${REPLAY_COLUMNS}, date(game_date) AS session_date
-      FROM replays
-      WHERE toon_handle = ?
-        AND date(game_date) IN (
-          SELECT DISTINCT date(game_date)
-          FROM replays WHERE toon_handle = ?
-          ORDER BY date(game_date) DESC LIMIT ?
-        )
-      ORDER BY game_date ASC
-    `),
-
-    lastNByMode: db.prepare(`
-      SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE toon_handle = ? AND game_mode = ?
-      ORDER BY game_date DESC LIMIT ?
-    `),
-    lastNAll: db.prepare(`
-      SELECT ${REPLAY_COLUMNS} FROM replays
-      WHERE toon_handle = ?
-      ORDER BY game_date DESC LIMIT ?
-    `),
-
     availableModes: db.prepare(`
       SELECT DISTINCT game_mode FROM replays ORDER BY game_mode
     `),
@@ -207,27 +151,89 @@ function markFileProcessed(filename) {
   stmts.markProcessed.run(filename);
 }
 
-function getTodayGames(toonHandle, mode) {
-  return mode === ALL_MODES
-    ? stmts.todayAll.all(toonHandle)
-    : stmts.todayByMode.all(toonHandle, mode);
+// Build a dynamic query with optional player and mode filters.
+// toonHandles: array of toon_handles, or null for all players.
+function queryGames(toonHandles, mode, extraConditions, extraParams, suffix) {
+  const conditions = [];
+  const params = [];
+
+  if (toonHandles && toonHandles.length > 0) {
+    const placeholders = toonHandles.map(() => '?').join(', ');
+    conditions.push(`toon_handle IN (${placeholders})`);
+    params.push(...toonHandles);
+  }
+
+  if (mode !== ALL_MODES) {
+    conditions.push('game_mode = ?');
+    params.push(mode);
+  }
+
+  if (extraConditions) {
+    for (const { sql, values } of extraConditions) {
+      conditions.push(sql);
+      params.push(...values);
+    }
+  }
+
+  params.push(...(extraParams || []));
+
+  const where = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+  return db.prepare(`SELECT ${REPLAY_COLUMNS} FROM replays${where}${suffix || ''}`).all(...params);
 }
 
-function getSessionGames(toonHandle, date, mode) {
-  return mode === ALL_MODES
-    ? stmts.sessionAll.all(toonHandle, date)
-    : stmts.sessionByMode.all(toonHandle, date, mode);
+function getTodayGames(toonHandles, mode) {
+  return queryGames(
+    toonHandles, mode,
+    [{ sql: "date(game_date) = date('now', 'localtime')", values: [] }],
+    [], ' ORDER BY game_date ASC',
+  );
 }
 
-function getRecentSessions(toonHandle, limit, mode) {
-  const rows = mode === ALL_MODES
-    ? stmts.recentAll.all(toonHandle, toonHandle, limit)
-    : stmts.recentByMode.all(toonHandle, mode, toonHandle, mode, limit);
+function getSessionGames(toonHandles, date, mode) {
+  return queryGames(
+    toonHandles, mode,
+    [{ sql: 'date(game_date) = ?', values: [date] }],
+    [], ' ORDER BY game_date ASC',
+  );
+}
 
+function getRecentSessions(toonHandles, limit, mode) {
+  // First get the distinct session dates
+  const conditions = [];
+  const params = [];
+
+  if (toonHandles && toonHandles.length > 0) {
+    const placeholders = toonHandles.map(() => '?').join(', ');
+    conditions.push(`toon_handle IN (${placeholders})`);
+    params.push(...toonHandles);
+  }
+
+  if (mode !== ALL_MODES) {
+    conditions.push('game_mode = ?');
+    params.push(mode);
+  }
+
+  const where = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+  const dates = db.prepare(`SELECT DISTINCT date(game_date) AS d FROM replays${where} ORDER BY d DESC LIMIT ?`)
+    .all(...params, limit)
+    .map(r => r.d);
+
+  if (dates.length === 0) return [];
+
+  // Get all games for those dates
+  const datePlaceholders = dates.map(() => '?').join(', ');
+  const rows = queryGames(
+    toonHandles, mode,
+    [{ sql: `date(game_date) IN (${datePlaceholders})`, values: dates }],
+    [], ' ORDER BY game_date ASC',
+  );
+
+  // Group by session_date manually
   const sessionMap = new Map();
   for (const row of rows) {
-    if (!sessionMap.has(row.session_date)) sessionMap.set(row.session_date, []);
-    sessionMap.get(row.session_date).push(row);
+    const d = row.game_date.slice(0, 10); // YYYY-MM-DD
+    if (!sessionMap.has(d)) sessionMap.set(d, []);
+    sessionMap.get(d).push(row);
   }
 
   return [...sessionMap.entries()].map(([date, games]) => ({
@@ -237,10 +243,11 @@ function getRecentSessions(toonHandle, limit, mode) {
   }));
 }
 
-function getLastNGames(toonHandle, limit, mode) {
-  const rows = mode === ALL_MODES
-    ? stmts.lastNAll.all(toonHandle, limit)
-    : stmts.lastNByMode.all(toonHandle, mode, limit);
+function getLastNGames(toonHandles, limit, mode) {
+  const rows = queryGames(
+    toonHandles, mode,
+    [], [limit], ' ORDER BY game_date DESC LIMIT ?',
+  );
   return rows.reverse(); // oldest-first for frontend rendering
 }
 

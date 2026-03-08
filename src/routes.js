@@ -13,6 +13,17 @@ const router = express.Router();
 let broadcast = () => {};
 function init(broadcastFn) { broadcast = broadcastFn; }
 
+// --- Auth middleware (upload routes only) ---
+function checkAuth(req, res, next) {
+  if (!config.authToken) return next();
+  const header = req.headers.authorization || '';
+  const expected = `Bearer ${config.authToken}`;
+  if (header.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(header), Buffer.from(expected)))
+    return next();
+  res.status(401).json({ error: 'Unauthorized' });
+}
+
 const upload = multer({
   dest: config.replayDir,
   fileFilter: (_req, file, cb) => {
@@ -29,20 +40,19 @@ function resolveMode(query) {
   return match || mode;
 }
 
+// Returns an array of toon_handles, or null.
+// Supports: ?player=name, ?player=toon1,toon2, ?player=all
 function resolvePlayer(query) {
   const player = query.player;
-  if (!player) return config.toonHandle || null;
-  const resolved = db.resolveToonHandle(player);
-  return resolved || player;
-}
-
-function requirePlayer(req, res) {
-  const player = resolvePlayer(req.query);
-  if (!player) {
-    res.status(400).json({ error: 'No player specified. Set TOON_HANDLE in .env or use ?player= param.' });
-    return null;
+  if (!player) return config.toonHandle ? [config.toonHandle] : null;
+  if (player.toLowerCase() === 'all') return null; // null = all players (no filter)
+  const parts = player.split(',').map(p => p.trim()).filter(Boolean);
+  const resolved = [];
+  for (const p of parts) {
+    const toon = db.resolveToonHandle(p);
+    resolved.push(toon || p);
   }
-  return player;
+  return resolved;
 }
 
 function formatGame(row) {
@@ -62,48 +72,44 @@ function formatGame(row) {
 }
 
 router.get('/today', (req, res) => {
-  const player = requirePlayer(req, res);
-  if (!player) return;
+  const players = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
-  const games = db.getTodayGames(player, mode);
+  const games = db.getTodayGames(players, mode);
   const stats = db.computeStats(games);
-  res.json({ games: games.map(formatGame), stats, mode, player });
+  res.json({ games: games.map(formatGame), stats, mode, player: players });
 });
 
 router.get('/session/:date', (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(req.params.date)) {
     return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
   }
-  const player = requirePlayer(req, res);
-  if (!player) return;
+  const players = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
-  const rawGames = db.getSessionGames(player, req.params.date, mode);
+  const rawGames = db.getSessionGames(players, req.params.date, mode);
   const stats = db.computeStats(rawGames);
-  res.json({ date: req.params.date, games: rawGames.map(formatGame), stats, mode, player });
+  res.json({ date: req.params.date, games: rawGames.map(formatGame), stats, mode, player: players });
 });
 
 router.get('/sessions', (req, res) => {
-  const player = requirePlayer(req, res);
-  if (!player) return;
+  const players = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
   const parsed = parseInt(req.query.limit, 10);
   const limit = Math.min(Number.isNaN(parsed) ? 10 : parsed, 50);
-  const sessions = db.getRecentSessions(player, limit, mode).map(session => ({
+  const sessions = db.getRecentSessions(players, limit, mode).map(session => ({
     ...session,
     games: session.games.map(formatGame),
   }));
-  res.json({ sessions, mode, player });
+  res.json({ sessions, mode, player: players });
 });
 
 router.get('/recent', (req, res) => {
-  const player = requirePlayer(req, res);
-  if (!player) return;
+  const players = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
   const parsedLimit = parseInt(req.query.limit, 10);
   const limit = Math.min(Number.isNaN(parsedLimit) ? 10 : parsedLimit, 10);
-  const games = db.getLastNGames(player, limit, mode);
+  const games = db.getLastNGames(players, limit, mode);
   const stats = db.computeStats(games);
-  res.json({ games: games.map(formatGame), stats, mode, player });
+  res.json({ games: games.map(formatGame), stats, mode, player: players });
 });
 
 const BUILD_ID = new Date().toISOString();
@@ -119,17 +125,6 @@ router.get('/modes', (_req, res) => {
 router.get('/players', (_req, res) => {
   res.json({ players: db.getAvailablePlayers(), default: config.toonHandle });
 });
-
-function checkAuth(req, res, next) {
-  if (!config.authToken) return next();
-  const header = req.headers.authorization || '';
-  const expected = `Bearer ${config.authToken}`;
-  if (
-    header.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(header), Buffer.from(expected))
-  ) return next();
-  res.status(401).json({ error: 'Invalid or missing auth token.' });
-}
 
 // Validate filename to prevent path traversal
 function isValidFilename(filename) {

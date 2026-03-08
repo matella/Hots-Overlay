@@ -76,6 +76,9 @@ pub struct AppState {
     pub bulk_progress: Option<BulkProgress>,
     pub scanning: bool,
 
+    // Update check
+    pub update_available: Option<(String, String)>, // (version, release_url)
+
     // GUI repaint handle
     pub ctx: Option<egui::Context>,
 }
@@ -99,6 +102,7 @@ impl AppState {
             recent_uploads: VecDeque::new(),
             bulk_progress: None,
             scanning: false,
+            update_available: None,
             ctx: None,
         }
     }

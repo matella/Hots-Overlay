@@ -4,6 +4,7 @@ mod app;
 mod settings;
 mod state;
 mod tray;
+mod updater;
 mod uploader;
 mod watcher;
 mod win_utils;
@@ -46,6 +47,9 @@ fn main() {
     if !cfg.server_url.is_empty() {
         uploader::start_connectivity_check(state.clone(), tx.clone(), rt_handle.clone());
     }
+
+    // Check for updates
+    updater::check_for_update(state.clone(), rt_handle.clone());
 
     // Start watcher + scan if replay dir is configured
     let watcher_handle = if let Some(ref dir) = cfg.replay_dir {

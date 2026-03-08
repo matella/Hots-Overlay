@@ -80,14 +80,13 @@ pub fn load() -> Settings {
     }
 }
 
-/// Save replay_dir to settings.json (preserves other fields)
-pub fn save(replay_dir: &str) -> Result<(), String> {
-    let mut file_settings = fs::read_to_string(settings_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<SettingsFile>(&s).ok())
-        .unwrap_or_default();
-
-    file_settings.replay_dir = Some(replay_dir.to_string());
+/// Save all settings to settings.json
+pub fn save(server_url: &str, auth_token: &str, replay_dir: &str) -> Result<(), String> {
+    let file_settings = SettingsFile {
+        server_url: if server_url.is_empty() { None } else { Some(server_url.to_string()) },
+        auth_token: if auth_token.is_empty() { None } else { Some(auth_token.to_string()) },
+        replay_dir: if replay_dir.is_empty() { None } else { Some(replay_dir.to_string()) },
+    };
 
     let json = serde_json::to_string_pretty(&file_settings)
         .map_err(|e| format!("Failed to serialize settings: {}", e))?;
