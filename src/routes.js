@@ -172,6 +172,14 @@ function processReplayFile(filename, filePath, res) {
     return res.json({ status: 'ok', filename, parsed: false, destSize, parseError: parseResult.error });
   }
 
+  // Check for duplicate game by fingerprint (same game uploaded from different file)
+  if (parseResult.gameFingerprint && db.gameExists(parseResult.gameFingerprint)) {
+    console.log(`[upload] ${filename}: duplicate game (fingerprint match)`);
+    db.markFileProcessed(filename);
+    try { fs.unlinkSync(dest); } catch {}
+    return res.status(409).json({ status: 'duplicate', filename, reason: 'game_fingerprint' });
+  }
+
   const parsedPlayers = parseResult.players;
   let insertedCount = 0;
   for (const playerData of parsedPlayers) {
@@ -184,6 +192,9 @@ function processReplayFile(filename, filePath, res) {
   }
 
   db.markFileProcessed(filename);
+  if (parseResult.gameFingerprint) {
+    db.storeGameFingerprint(parseResult.gameFingerprint, filename);
+  }
 
   for (const p of parsedPlayers) {
     broadcast({

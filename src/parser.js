@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const Parser = require('hots-parser');
 const config = require('./config');
 const db = require('./database');
@@ -44,7 +45,7 @@ function parseReplay(filePath) {
     : String(result.match.date);
   const map = result.match.map;
   const gameMode = GAME_MODE_STRINGS[result.match.mode] || 'Unknown';
-  const duration = result.match.length || null;
+  const duration = result.match.length ?? null;
 
   const players = [];
   for (const [toonHandle, player] of Object.entries(result.players)) {
@@ -68,7 +69,13 @@ function parseReplay(filePath) {
     return { error: `No valid players found` };
   }
 
-  return { players };
+  // Compute a game fingerprint from match data to detect duplicate games
+  // even when uploaded from different replay files
+  const sortedToons = Object.keys(result.players).sort().join(',');
+  const fingerprintSource = `${gameDate}|${map}|${duration}|${sortedToons}`;
+  const gameFingerprint = crypto.createHash('sha256').update(fingerprintSource).digest('hex');
+
+  return { players, gameFingerprint };
 }
 
 function yieldToEventLoop() {
@@ -105,8 +112,16 @@ async function scanAndParseAll(replayDir, onProgress) {
     db.runInTransaction(() => {
       for (const { file, result } of parsed) {
         if (result && result.players) {
+          // Skip duplicate games by fingerprint
+          if (result.gameFingerprint && db.gameExists(result.gameFingerprint)) {
+            db.markFileProcessed(file);
+            continue;
+          }
           for (const playerData of result.players) {
             db.insertReplay(playerData);
+          }
+          if (result.gameFingerprint) {
+            db.storeGameFingerprint(result.gameFingerprint, file);
           }
         }
         db.markFileProcessed(file);

@@ -44,6 +44,11 @@ function initDatabase() {
     CREATE TABLE IF NOT EXISTS processed_files (
       filename TEXT PRIMARY KEY NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS game_fingerprints (
+      fingerprint TEXT PRIMARY KEY NOT NULL,
+      filename TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
   // Migration: add toon_handle column (changes UNIQUE constraint to compound key)
@@ -109,6 +114,9 @@ function initDatabase() {
     isProcessed: db.prepare('SELECT 1 FROM processed_files WHERE filename = ?'),
     markProcessed: db.prepare('INSERT OR IGNORE INTO processed_files (filename) VALUES (?)'),
 
+    getFingerprint: db.prepare('SELECT 1 FROM game_fingerprints WHERE fingerprint = ?'),
+    insertFingerprint: db.prepare('INSERT OR IGNORE INTO game_fingerprints (fingerprint, filename) VALUES (?, ?)'),
+
     availableModes: db.prepare(`
       SELECT DISTINCT game_mode FROM replays ORDER BY game_mode
     `),
@@ -149,6 +157,14 @@ function isFileProcessed(filename) {
 
 function markFileProcessed(filename) {
   stmts.markProcessed.run(filename);
+}
+
+function gameExists(fingerprint) {
+  return !!stmts.getFingerprint.get(fingerprint);
+}
+
+function storeGameFingerprint(fingerprint, filename) {
+  stmts.insertFingerprint.run(fingerprint, filename);
 }
 
 // Build a dynamic query with optional player and mode filters.
@@ -274,6 +290,8 @@ module.exports = {
   getAllProcessedFilenames,
   isFileProcessed,
   markFileProcessed,
+  gameExists,
+  storeGameFingerprint,
   getTodayGames,
   getSessionGames,
   getRecentSessions,
