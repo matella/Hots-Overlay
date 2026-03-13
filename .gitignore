@@ -6,3 +6,4 @@ client/dist/
 client-rs/target/
 client-rs/installer-output/
 extension.zip
+certs/
