@@ -211,6 +211,65 @@ Same as the local setup, but use the remote server URL:
 
 ---
 
+## Option C: Twitch Extension
+
+The Twitch Extension displays your match history as a component overlay directly on your Twitch channel page — no OBS Browser Source needed. Viewers see the overlay while watching your stream.
+
+### Prerequisites
+
+- A registered Twitch extension with **Client ID** and **Extension Secret** (see registration steps below)
+- Your overlay server running and reachable from the internet (Option A local or Option B Docker)
+
+### 1. Register the Extension on Twitch
+
+1. Go to [dev.twitch.tv/console/extensions](https://dev.twitch.tv/console/extensions) and click **"Create Extension"**.
+2. Fill in the metadata:
+   - **Name**: HotS Match History
+   - **Summary**: Real-time Heroes of the Storm match history overlay for your Twitch stream
+   - **Description**: Shows your recent HotS games — heroes, team compositions, and results — as a live sidebar overlay on your stream.
+   - **Category**: Games
+   - **Extension Type**: Component (video overlay)
+3. In the **Capabilities** tab:
+   - Enable **Component** and set the iframe path to `video_overlay.html`
+   - Enable **Configuration** and set the path to `config.html`
+4. In the **Asset Hosting** tab, upload all files from `public/extension/`:
+   - `video_overlay.html`, `config.html`
+   - `js/overlay.js`, `js/config.js`
+   - `css/overlay.css`, `css/config.css`
+5. In the **Status** tab, add your Twitch username to the **Testing Allowlist**.
+
+### 2. Copy credentials to your `.env`
+
+From the extension's **Settings** tab on the Developer Console:
+
+```env
+TWITCH_CLIENT_ID=<Client ID>
+TWITCH_EXTENSION_SECRET=<Base64-encoded Extension Secret>
+TWITCH_BROADCASTER_ID=<your numeric Twitch user ID>
+```
+
+> To find your numeric Twitch user ID, visit `https://api.twitch.tv/helix/users?login=<your_username>` with a Client ID header, or use a third-party lookup tool.
+
+### 3. Configure the extension on your channel
+
+1. Go to your Twitch channel → **Extensions** → find **HotS Match History** → **Configure**.
+2. In the configuration panel, enter:
+   - **EBS Server URL**: the public URL of your overlay server (e.g. `https://your-server:3001`)
+   - **Auth Token**: your `AUTH_TOKEN` value (leave blank if not set)
+   - **Player Name**: your `TOON_HANDLE` (optional — defaults to the server's configured player)
+   - **Game Mode**: leave blank for Storm League, or enter `custom`, `quick match`, etc.
+3. Click **Save**.
+
+### 4. Activate the extension
+
+On your Twitch channel Extensions page, activate **HotS Match History** as a **Component** overlay. The extension will appear on your channel for viewers in the allowlist (testing) or all viewers (once published).
+
+### How PubSub updates work
+
+When a new replay is uploaded to your server, it broadcasts a `new_game` message via Twitch PubSub. The overlay instantly prepends the new game card without requiring a page refresh. If `TWITCH_CLIENT_ID` or `TWITCH_EXTENSION_SECRET` are not set, the server falls back to serving static data only (no live push).
+
+---
+
 ## Troubleshooting
 
 | Problem | Solution |
