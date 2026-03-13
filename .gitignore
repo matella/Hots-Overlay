@@ -5,3 +5,4 @@ client/dist/
 .claude/
 client-rs/target/
 client-rs/installer-output/
+extension.zip
