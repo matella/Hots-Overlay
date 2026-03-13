@@ -232,10 +232,7 @@ The Twitch Extension displays your match history as a component overlay directly
 3. In the **Capabilities** tab:
    - Enable **Component** and set the iframe path to `video_overlay.html`
    - Enable **Configuration** and set the path to `config.html`
-4. In the **Asset Hosting** tab, upload all files from `public/extension/`:
-   - `video_overlay.html`, `config.html`
-   - `js/overlay.js`, `js/config.js`
-   - `css/overlay.css`, `css/config.css`
+4. In the **Files** tab, create a zip of the **contents** of `public/extension/` (zip the files inside, not the folder itself — the zip root must contain `video_overlay.html`, `config.html`, `js/`, `css/`) and upload it.
 5. In the **Status** tab, add your Twitch username to the **Testing Allowlist**.
 
 ### 2. Copy credentials to your `.env`
