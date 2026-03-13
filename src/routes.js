@@ -6,6 +6,7 @@ const multer = require('multer');
 const db = require('./database');
 const config = require('./config');
 const { getHeroImageUrl } = require('./heroNames');
+const { getMapImageUrl } = require('./mapImages');
 const { parseReplay } = require('./parser');
 
 const router = express.Router();
@@ -110,6 +111,59 @@ router.get('/recent', (req, res) => {
   const games = db.getLastNGames(players, limit, mode);
   const stats = db.computeStats(games);
   res.json({ games: games.map(formatGame), stats, mode, player: players });
+});
+
+// Returns recent games grouped with all 10 heroes (both teams) per game.
+// Used by the Twitch Extension video overlay sidebar.
+// Requires a single player to determine "my team" vs "their team".
+router.get('/recent-full', (req, res) => {
+  const players = resolvePlayer(req.query);
+  if (!players || players.length !== 1) {
+    return res.status(400).json({ error: 'Exactly one player required. Use ?player= or set TOON_HANDLE.' });
+  }
+  const toonHandle = players[0];
+  const mode = resolveMode(req.query);
+  const parsedLimit = parseInt(req.query.limit, 10);
+  const limit = Math.min(Number.isNaN(parsedLimit) ? 10 : parsedLimit, 10);
+
+  const rawGames = db.getRecentGroupedGames(toonHandle, mode, limit);
+
+  const games = rawGames.map(g => {
+    const myTeam = g.players
+      .filter(p => p.win === g.myWin)
+      .map(p => ({
+        toonHandle: p.toonHandle,
+        playerName: p.playerName,
+        hero: p.hero,
+        heroShort: p.heroShort,
+        heroImage: getHeroImageUrl(p.hero),
+        isMe: p.isMe,
+      }));
+    const theirTeam = g.players
+      .filter(p => p.win !== g.myWin)
+      .map(p => ({
+        toonHandle: p.toonHandle,
+        playerName: p.playerName,
+        hero: p.hero,
+        heroShort: p.heroShort,
+        heroImage: getHeroImageUrl(p.hero),
+        isMe: false,
+      }));
+    return {
+      gameDate: g.gameDate,
+      map: g.map,
+      mapImage: getMapImageUrl(g.map),
+      gameMode: g.gameMode,
+      duration: g.duration,
+      result: g.myWin ? 'win' : 'defeat',
+      myTeam,
+      theirTeam,
+    };
+  });
+
+  const statsGames = rawGames.map(g => ({ win: Boolean(g.myWin) }));
+  const stats = db.computeStats(statsGames);
+  res.json({ games, stats, mode, player: toonHandle });
 });
 
 const BUILD_ID = new Date().toISOString();

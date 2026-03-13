@@ -266,6 +266,55 @@ function getLastNGames(toonHandles, limit, mode) {
   );
 }
 
+// Returns the last N games for a single tracked player, with all 10 players per game
+// grouped into myTeam (same win value) and theirTeam (opposite win value).
+// toonHandle must be a single string (not an array).
+function getRecentGroupedGames(toonHandle, mode, limit) {
+  const conditions = ['toon_handle = ?'];
+  const params = [toonHandle];
+
+  if (mode !== ALL_MODES) {
+    conditions.push('game_mode = ?');
+    params.push(mode);
+  }
+
+  const where = conditions.join(' AND ');
+  const myGames = db.prepare(`
+    SELECT game_date, map, duration, game_mode, win
+    FROM replays
+    WHERE ${where}
+    ORDER BY game_date DESC
+    LIMIT ?
+  `).all(...params, limit);
+
+  if (myGames.length === 0) return [];
+
+  const getGamePlayers = db.prepare(`
+    SELECT toon_handle, player_name, hero, hero_short, win
+    FROM replays
+    WHERE game_date = ? AND map = ? AND duration = ?
+  `);
+
+  return myGames.map(myGame => {
+    const allPlayers = getGamePlayers.all(myGame.game_date, myGame.map, myGame.duration);
+    return {
+      gameDate: myGame.game_date,
+      map: myGame.map,
+      gameMode: myGame.game_mode,
+      duration: myGame.duration,
+      myWin: myGame.win,
+      players: allPlayers.map(p => ({
+        toonHandle: p.toon_handle,
+        playerName: p.player_name,
+        hero: p.hero,
+        heroShort: p.hero_short,
+        win: p.win,
+        isMe: p.toon_handle === toonHandle,
+      })),
+    };
+  });
+}
+
 function getAvailableModes() {
   return stmts.availableModes.all().map(r => r.game_mode);
 }
@@ -296,6 +345,7 @@ module.exports = {
   getSessionGames,
   getRecentSessions,
   getLastNGames,
+  getRecentGroupedGames,
   getAvailableModes,
   resolveToonHandle,
   getAvailablePlayers,
