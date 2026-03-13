@@ -11,6 +11,7 @@ const { parseReplay, scanAndParseAll } = require('./src/parser');
 const { startWatcher } = require('./src/watcher');
 const { getHeroImageUrl } = require('./src/heroNames');
 const routes = require('./src/routes');
+const twitch = require('./src/twitch');
 const swaggerUi = require('swagger-ui-express');
 const swaggerDoc = require('./src/swagger.json');
 
@@ -67,6 +68,14 @@ function onNewReplay(filePath) {
         duration: p.duration,
       },
     });
+  }
+
+  if (config.twitch.broadcasterId && config.twitch.clientId) {
+    const grouped = db.getRecentGroupedGames(config.toonHandle, db.ALL_MODES, 1);
+    if (grouped.length > 0) {
+      twitch.sendPubSubMessage(config.twitch.broadcasterId, { type: 'new_game', game: grouped[0] })
+        .catch(err => console.error('[twitch] PubSub failed:', err.message));
+    }
   }
 }
 

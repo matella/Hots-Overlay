@@ -16,6 +16,14 @@ const config = Object.freeze({
   gameMode: process.env.GAME_MODE || 'Storm League',
   authToken: process.env.AUTH_TOKEN || null,
   modeLabels,
+  twitch: Object.freeze({
+    // From the Twitch Developer Console > Extensions > your extension
+    clientId: process.env.TWITCH_CLIENT_ID || null,
+    // Base64-encoded extension secret from the Twitch Developer Console
+    extensionSecret: process.env.TWITCH_EXTENSION_SECRET || null,
+    // Twitch numeric user ID of the broadcaster (channel owner)
+    broadcasterId: process.env.TWITCH_BROADCASTER_ID || null,
+  }),
 });
 
 if (!config.replayDir) throw new Error('Missing required env var REPLAY_DIR. Check your .env file.');
