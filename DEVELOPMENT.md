@@ -8,15 +8,19 @@ This guide covers local development tooling for the Twitch extension.
 
 Install these tools once on your development machine:
 
+**macOS:**
 ```bash
-# Twitch CLI — for simulating PubSub messages and API calls
 brew install twitch-cli
-
-# mkcert — for locally trusted HTTPS certificates (required for Extension Local Test)
 brew install mkcert
 ```
 
-> **Windows / Linux:** see [Twitch CLI releases](https://github.com/twitchdev/twitch-cli/releases) and [mkcert releases](https://github.com/FiloSottile/mkcert/releases) for platform installers.
+**Windows (PowerShell):**
+```powershell
+winget install TwitchInteractive.TwitchCLI
+winget install FiloSottile.mkcert
+```
+
+> If `winget` is unavailable, download binaries directly from [Twitch CLI releases](https://github.com/twitchdev/twitch-cli/releases) and [mkcert releases](https://github.com/FiloSottile/mkcert/releases) and add them to your PATH.
 
 ---
 
@@ -49,7 +53,14 @@ show certificate warnings for locally generated certs.
 From the project root:
 
 ```bash
+# macOS / Linux
 mkdir -p certs
+
+# Windows (PowerShell or Command Prompt)
+mkdir certs
+```
+
+```bash
 mkcert -key-file certs/localhost-key.pem -cert-file certs/localhost.pem localhost 127.0.0.1
 ```
 
@@ -161,4 +172,5 @@ For the extension, after editing any file in `public/extension/`:
 | Start dev server (HTTP + HTTPS) | Set `HTTPS_PORT` in `.env`, then `npm run dev` |
 | Regenerate local certs | `mkcert -key-file certs/localhost-key.pem -cert-file certs/localhost.pem localhost 127.0.0.1` |
 | Send test PubSub message | `twitch extensions send-pubsub-message ...` (see above) |
-| Build extension zip for upload | `cd public/extension && zip -r ../../extension.zip .` |
+| Build extension zip (macOS/Linux) | `cd public/extension && zip -r ../../extension.zip .` |
+| Build extension zip (Windows) | `Compress-Archive -Path public\extension\* -DestinationPath extension.zip` |
