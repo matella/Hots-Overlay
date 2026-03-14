@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HotS Overlay – Match Detail</title>
+  <link rel="stylesheet" href="/css/match.css">
+</head>
+<body>
+  <div id="app">
+    <header class="page-header">
+      <a href="/history.html" class="back-link">&larr; Match History</a>
+    </header>
+
+    <div id="loading-state" class="loading-state">Loading&hellip;</div>
+    <div id="error-state" class="error-state" hidden></div>
+
+    <div id="match-detail" hidden>
+
+      <!-- 1. Match header -->
+      <section id="section-header" class="match-header"></section>
+
+      <!-- 2. Team compositions + bans -->
+      <section class="section-card">
+        <h2 class="section-title">Team Compositions</h2>
+        <div class="teams-layout">
+          <div id="team-col-0" class="team-column"></div>
+          <div class="teams-vs">VS</div>
+          <div id="team-col-1" class="team-column"></div>
+        </div>
+      </section>
+
+      <!-- 3. Talent builds -->
+      <section class="section-card" id="section-talents">
+        <h2 class="section-title">Talent Builds</h2>
+        <div class="tier-header-row">
+          <div class="talent-player-info"></div>
+          <div class="talent-tiers-header">
+            <span class="tier-label">Lv 1</span>
+            <span class="tier-label">Lv 4</span>
+            <span class="tier-label">Lv 7</span>
+            <span class="tier-label">Lv 10</span>
+            <span class="tier-label">Lv 13</span>
+            <span class="tier-label">Lv 16</span>
+            <span class="tier-label">Lv 20</span>
+          </div>
+        </div>
+        <div id="talents-team-0" class="talents-team-block"></div>
+        <div id="talents-team-1" class="talents-team-block talents-team-1"></div>
+      </section>
+
+      <!-- 4. Game timeline -->
+      <section class="section-card" id="section-timeline">
+        <h2 class="section-title">Game Timeline</h2>
+        <div id="timeline-list" class="timeline-list"></div>
+        <div id="timeline-empty" class="timeline-empty" hidden>No timeline events recorded.</div>
+      </section>
+
+    </div>
+  </div>
+
+  <script src="/js/match.js"></script>
+</body>
+</html>
