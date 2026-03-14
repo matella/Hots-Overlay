@@ -60,4 +60,7 @@ jobs:
           app-name: 'hots-overlay'
           slot-name: 'Production'
           images: 'hotsoverlay.azurecr.io/${{ secrets.AZUREAPPSERVICE_CONTAINERUSERNAME_C19D3ADBF8DF4933B190B8559778D266 }}/hotsoverlay/hots-overlay:${{ github.sha }}'
-          
+          app-settings: |
+            TWITCH_CLIENT_ID=${{ secrets.TWITCH_CLIENT_ID }}
+            TWITCH_EXTENSION_SECRET=${{ secrets.TWITCH_EXTENSION_SECRET }}
+            TWITCH_BROADCASTER_ID=${{ secrets.TWITCH_BROADCASTER_ID }}

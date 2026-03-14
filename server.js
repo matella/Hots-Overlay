@@ -1,5 +1,6 @@
 console.log('[startup] Loading modules...');
 const express = require('express');
+const cors = require('cors');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -22,6 +23,19 @@ db.initDatabase();
 console.log('[startup] Database ready');
 
 const app = express();
+
+// Allow Twitch extension frontends (*.ext-twitch.tv) and local dev to call the EBS API
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // same-origin, curl, Azure health checks
+    if (/^https:\/\/[^/]+\.ext-twitch\.tv$/.test(origin)) return callback(null, true);
+    if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return callback(null, true);
+    callback(Object.assign(new Error('CORS: origin not allowed'), { status: 403 }));
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Filename', 'X-Content-Encoding', 'X-Content-Sha256'],
+}));
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
 app.use('/api', routes);
