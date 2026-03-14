@@ -18,6 +18,24 @@ const GAME_MODE_STRINGS = {
   '-1': 'Custom',
 };
 
+const TIER_MAP = {
+  Tier1Choice: 1,
+  Tier4Choice: 4,
+  Tier7Choice: 7,
+  Tier10Choice: 10,
+  Tier13Choice: 13,
+  Tier16Choice: 16,
+  Tier20Choice: 20,
+};
+
+function extractTalents(rawTalents) {
+  if (!rawTalents || typeof rawTalents !== 'object') return [];
+  return Object.entries(rawTalents)
+    .filter(([k, name]) => TIER_MAP[k] != null && name != null)
+    .map(([k, name]) => ({ tier: TIER_MAP[k], name }))
+    .sort((a, b) => a.tier - b.tier);
+}
+
 function parseReplay(filePath) {
   const filename = path.basename(filePath);
 
@@ -29,7 +47,7 @@ function parseReplay(filePath) {
 
   let result;
   try {
-    result = Parser.processReplay(filePath, { getBMData: false, overrideVerifiedBuild: true });
+    result = Parser.processReplay(filePath, { getBMData: false, overrideVerifiedBuild: true, legacyTalentKeys: false });
   } catch (err) {
     return { error: `Parser exception: ${err.message}` };
   }
@@ -63,6 +81,7 @@ function parseReplay(filePath) {
       duration,
       playerName: player.name,
       teamIndex: player.team != null ? player.team - 1 : null,
+      talents: extractTalents(player.talents),
     });
   }
 
