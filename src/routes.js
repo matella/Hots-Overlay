@@ -297,6 +297,7 @@ router.get('/matches', async (req, res) => {
       fingerprint: doc.fingerprint,
       gameDate:    doc.gameDate,
       map:         doc.map,
+      mapImage:    getMapImageUrl(doc.map),
       gameMode:    doc.gameMode,
       duration:    doc.duration,
       teams: (doc.teams || []).map(team => ({
