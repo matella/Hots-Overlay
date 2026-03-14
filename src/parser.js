@@ -6,6 +6,20 @@ const config = require('./config');
 const db = require('./database');
 const { normalizeHeroName } = require('./heroNames');
 
+const MAP_OBJECTIVE_NAMES = {
+  'Cursed Hollow': 'Tribute',
+  'Dragon Shire': 'Dragon Knight',
+  'Garden of Terror': 'Garden Terror',
+  'Infernal Shrines': 'Punisher',
+  'Tomb of the Spider Queen': 'Spider Queen',
+  'Sky Temple': 'Temple',
+  'Towers of Doom': 'Altar',
+  "Blackheart's Bay": 'Coin',
+  'Warhead Junction': 'Nuke',
+  'Volskaya Foundry': 'Triglav Protector',
+  'Alterac Pass': 'Cavalry',
+};
+
 const GAME_MODE_STRINGS = {
   50001: 'Quick Match',
   50021: 'Versus AI',
@@ -34,6 +48,84 @@ function extractTalents(rawTalents) {
     .filter(([k, name]) => TIER_MAP[k] != null && name != null)
     .map(([k, name]) => ({ tier: TIER_MAP[k], name }))
     .sort((a, b) => a.tier - b.tier);
+}
+
+function extractEvents(result) {
+  const events = [];
+  const loopGameStart = result.match.loopGameStart || 0;
+
+  // Build toonHandle → 0-indexed team map
+  const playerTeam = {};
+  for (const [toon, p] of Object.entries(result.players || {})) {
+    if (p && typeof p.team === 'number') playerTeam[toon] = p.team - 1;
+  }
+
+  // Kill events
+  for (const td of result.match.takedowns || []) {
+    events.push({
+      type: 'kill',
+      time: Math.round((td.loop - loopGameStart) / 16),
+      team: playerTeam[td.killers?.[0]?.player] ?? null,
+      subject: td.killers?.[0]?.player ?? null,
+      target: td.victim?.player ?? null,
+    });
+  }
+
+  // Structure destruction events
+  // Build lane map: for each (team, name) group, sort by Y ascending → bottom/mid/top
+  const structures = Object.entries(result.match.structures || {});
+  const laneMap = new Map();
+  const groups = new Map();
+  for (const [id, s] of structures) {
+    const key = `${s.team}|${s.name}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ id, y: s.y });
+  }
+  const LANE_LABELS = ['bottom', 'mid', 'top'];
+  for (const members of groups.values()) {
+    members.sort((a, b) => a.y - b.y);
+    members.forEach(({ id }, i) => {
+      const label = members.length === 1 ? 'mid'
+        : members.length === 2 ? (i === 0 ? 'bottom' : 'top')
+        : LANE_LABELS[Math.min(i, 2)];
+      laneMap.set(id, label);
+    });
+  }
+  for (const [id, s] of structures) {
+    if (s.destroyedLoop === undefined || s.destroyed === undefined) continue;
+    events.push({
+      type: 'fort_destroyed',
+      time: s.destroyed,
+      team: s.team,
+      subject: null,
+      target: null,
+      details: { name: s.name, lane: laneMap.get(id) ?? null },
+    });
+  }
+
+  // Objective events
+  const obj = result.match.objective;
+  if (obj) {
+    const objectiveName = MAP_OBJECTIVE_NAMES[result.match.map] || 'Objective';
+    for (const teamIdx of [0, 1]) {
+      const teamObj = obj[teamIdx];
+      if (!teamObj || !Array.isArray(teamObj.events)) continue;
+      for (const ev of teamObj.events) {
+        if (typeof ev.time !== 'number') continue;
+        events.push({
+          type: 'objective',
+          time: ev.time,
+          team: ev.team ?? teamIdx,
+          subject: null,
+          target: null,
+          details: { name: objectiveName },
+        });
+      }
+    }
+  }
+
+  events.sort((a, b) => a.time - b.time);
+  return events;
 }
 
 function parseReplay(filePath) {
@@ -114,7 +206,9 @@ function parseReplay(filePath) {
     }
   }
 
-  return { players, teams, gameFingerprint };
+  const events = extractEvents(result);
+
+  return { players, teams, gameFingerprint, events };
 }
 
 function yieldToEventLoop() {

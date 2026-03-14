@@ -17,6 +17,8 @@
  *   result.match.length            → duration  (Math.round((length - loopGameStart) / 16))
  *   result.match.bans["0"|"1"]     → teams[].bans  (map b => b.hero)
  *   result.match.takedowns[]       → events[]  (type: "kill")
+ *   result.match.structures        → events[]  (type: "fort_destroyed", details: {name, lane})
+ *   result.match.objective[t].events[] → events[]  (type: "objective", details: {name})
  *   result.players[toon].team      → teamIndex (parser is 1-indexed: 1→0, 2→1)
  *   result.players[toon].win       → teams[].win
  *   result.players[toon].hero      → hero
@@ -25,10 +27,10 @@
  *   result.players[toon].talents   → talents[] (object {"Tier1Choice": name} → [{tier,name}])
  *   result.players[toon].gameStats → stats     (Mixed, hero-specific)
  *
- * Note on fort_destroyed / objective events: hots-parser exposes these as
- * aggregated totals (result.match.structures, result.match.objective), not as
- * individual timed events. Timestamped entries for these types require raw
- * trackerevents parsing and are schema placeholders until that work is done.
+ * Note on fort_destroyed / objective events: hots-parser populates per-structure
+ * timestamps via result.match.structures[id].destroyed (seconds) and
+ * result.match.objective[team].events[].time. Both are extracted in extractEvents()
+ * in src/parser.js and stored in the events[] array.
  */
 
 const mongoose = require('mongoose');
@@ -170,17 +172,14 @@ const TeamSchema = new Schema(
  *   subject: toonHandle of the primary killer (td.killers[0]?.player)
  *   target:  toonHandle of the victim (td.victim.player)
  *
- * "fort_destroyed" — A fort/keep/core destroyed.
- *   NOTE: hots-parser exposes only aggregated structure totals, not per-event
- *   timestamps. This type is a schema placeholder; populate when raw
- *   trackerevents parsing is implemented.
+ * "fort_destroyed" — A fort/keep/tower destroyed. Source: result.match.structures.
  *   team:    teamIndex of the team that LOST the structure.
- *   name:    Structure type (e.g. "Fort", "Keep", "Core").
+ *   details: { name: string (e.g. "Fort", "Keep", "Fort Tower"), lane: "top"|"mid"|"bottom" }
+ *            Lane is derived by sorting same-type structures per team by Y coordinate.
  *
- * "objective" — A map objective captured.
- *   NOTE: Same caveat as fort_destroyed — aggregates only in current parser.
+ * "objective" — A map objective captured. Source: result.match.objective[team].events[].
  *   team:    teamIndex of the capturing team.
- *   name:    Objective name (map-specific, e.g. "Tribute", "Dragon Knight").
+ *   details: { name: string } — map-specific objective name (e.g. "Tribute", "Dragon Knight").
  *
  * All time values are in seconds (not game loops).
  */
@@ -209,8 +208,8 @@ const EventSchema = new Schema(
       type: String,
       default: null,
     },
-    name: {
-      type: String,
+    details: {
+      type: Schema.Types.Mixed,
       default: null,
     },
   },
