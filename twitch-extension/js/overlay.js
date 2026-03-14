@@ -9,6 +9,7 @@
   let gameMode = null;
   let modeLabels = {};
   let resolvedHandles = null; // array of toon handles for the tracked player
+  let hiddenByConfig = false;
 
   // ─── DOM helpers ─────────────────────────────────────────────────
 
@@ -180,8 +181,10 @@
 
         if (overlay) {
           if (saved.hidden) {
+            hiddenByConfig = true;
             overlay.style.display = 'none';
           } else {
+            hiddenByConfig = false;
             overlay.style.display = '';
             overlay.className = 'pos-' + (saved.position || 'bottom-left');
           }
@@ -209,6 +212,7 @@
 
   window.Twitch.ext.onContext(ctx => {
     const overlay = document.getElementById('portrait-overlay');
-    if (overlay) overlay.style.display = ctx.isFullScreen ? 'none' : '';
+    if (!overlay || hiddenByConfig) return;
+    overlay.style.display = ctx.isFullScreen ? 'none' : '';
   });
 })();
