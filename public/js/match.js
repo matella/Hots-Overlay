@@ -47,9 +47,9 @@
   function renderHeader(match) {
     const section = document.getElementById('section-header');
 
-    if (match.mapImage) {
+    if (match.mapImage && /^\/[a-zA-Z0-9/._-]+$/.test(match.mapImage)) {
       const bg = el('div', 'match-header-bg');
-      bg.style.backgroundImage = `url(${match.mapImage})`;
+      bg.style.backgroundImage = 'url(' + encodeURI(match.mapImage) + ')';
       section.appendChild(bg);
     }
 
@@ -365,7 +365,7 @@
     const id = params.get('id');
 
     if (!id) {
-      showError('No match ID provided. Return to <a href="/history.html">Match History</a>.');
+      showErrorWithLink('No match ID provided. Return to ', '/history.html', 'Match History');
       return;
     }
 
@@ -392,14 +392,26 @@
       document.getElementById('loading-state').hidden = true;
       document.getElementById('match-detail').hidden = false;
     } catch (err) {
-      showError(`Failed to load match: ${err.message}`);
+      showError('Failed to load match: ' + err.message);
     }
   }
 
-  function showError(html) {
+  function showError(text) {
     document.getElementById('loading-state').hidden = true;
     const errEl = document.getElementById('error-state');
-    errEl.innerHTML = html;
+    errEl.textContent = text;
+    errEl.hidden = false;
+  }
+
+  function showErrorWithLink(prefix, href, linkText) {
+    document.getElementById('loading-state').hidden = true;
+    const errEl = document.getElementById('error-state');
+    errEl.textContent = '';
+    errEl.appendChild(document.createTextNode(prefix));
+    const a = document.createElement('a');
+    a.href = href;
+    a.textContent = linkText;
+    errEl.appendChild(a);
     errEl.hidden = false;
   }
 

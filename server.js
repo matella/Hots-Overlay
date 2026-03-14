@@ -53,7 +53,16 @@ app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
 app.use('/api', routes);
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+
+// WebSocket origin validation (mirrors CORS policy)
+function verifyWsClient({ origin }) {
+  if (!origin) return true; // same-origin or non-browser clients
+  if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return true;
+  if (/^https:\/\/[^/]+\.ext-twitch\.tv$/.test(origin)) return true;
+  return false;
+}
+
+const wss = new WebSocketServer({ server, maxPayload: 1024, verifyClient: verifyWsClient });
 
 let wssHttps = null;
 
@@ -79,8 +88,17 @@ async function onNewReplay(filePath) {
     return;
   }
 
+  // Check for duplicate game by fingerprint (same game from different replay file)
+  if (result.gameFingerprint && db.gameExists(result.gameFingerprint)) {
+    db.markFileProcessed(filename);
+    return;
+  }
+
   for (const playerData of result.players) {
     db.insertReplay(playerData);
+  }
+  if (result.gameFingerprint) {
+    db.storeGameFingerprint(result.gameFingerprint, filename);
   }
   db.markFileProcessed(filename);
 
@@ -191,7 +209,7 @@ if (config.httpsPort && config.sslKeyPath && config.sslCertPath) {
       cert: fs.readFileSync(config.sslCertPath),
     };
     const httpsServer = https.createServer(sslOptions, app);
-    wssHttps = new WebSocketServer({ server: httpsServer });
+    wssHttps = new WebSocketServer({ server: httpsServer, maxPayload: 1024, verifyClient: verifyWsClient });
     httpsServer.listen(config.httpsPort, () => {
       console.log(`Overlay (HTTPS): https://localhost:${config.httpsPort}`);
     });

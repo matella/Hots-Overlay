@@ -7,7 +7,6 @@
   const pullTab = document.getElementById('pull-tab');
 
   const ebsUrl = 'https://hots-overlay.azurewebsites.net';
-  const authToken = 'DYbGv2035EscLfFEeB7vANFii9RqDvhKNZ3GhDgABSI';
   let player = null;
   let gameMode = null;
   let twitchJwt = null;
@@ -74,8 +73,10 @@
     wrap.className = 'hero-icon' + (isMe ? ' is-me' : '');
 
     const img = document.createElement('img');
-    img.src = hero.heroImage;
-    img.alt = hero.hero;
+    if (isSafeUrl(hero.heroImage)) {
+      img.src = hero.heroImage;
+    }
+    img.alt = hero.hero || '';
     img.loading = 'lazy';
     img.onerror = () => { img.style.opacity = '0.3'; };
 
@@ -97,17 +98,25 @@
     return row;
   }
 
-  function resolveUrl(path) {
-    if (!path) return null;
-    if (path.startsWith('http')) return path;
-    return ebsUrl ? ebsUrl + path : path;
+  function resolveUrl(p) {
+    if (!p || typeof p !== 'string') return null;
+    if (p.startsWith('https://') || p.startsWith('http://')) return p;
+    if (p.startsWith('/')) return ebsUrl ? ebsUrl + p : p;
+    return null; // reject non-absolute, non-relative paths
+  }
+
+  // Validate image URL to prevent javascript: or data: injection
+  function isSafeUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return url.startsWith('/') || url.startsWith('https://') || url.startsWith('http://');
   }
 
   function renderGame(game, index) {
     const card = document.createElement('div');
     card.className = 'game-card';
-    if (game.mapImage) {
-      card.style.setProperty('--map-img', `url(${resolveUrl(game.mapImage)})`);
+    const mapUrl = resolveUrl(game.mapImage);
+    if (mapUrl && isSafeUrl(mapUrl)) {
+      card.style.setProperty('--map-img', 'url(' + encodeURI(mapUrl) + ')');
     }
 
     // Header row: map name | result + duration | mode + time
@@ -206,8 +215,9 @@
     // Header with map
     const header = document.createElement('div');
     header.className = 'detail-header';
-    if (game.mapImage) {
-      header.style.setProperty('--map-img', 'url(' + resolveUrl(game.mapImage) + ')');
+    const detailMapUrl = resolveUrl(game.mapImage);
+    if (detailMapUrl && isSafeUrl(detailMapUrl)) {
+      header.style.setProperty('--map-img', 'url(' + encodeURI(detailMapUrl) + ')');
     }
 
     const mapName = document.createElement('div');
@@ -253,7 +263,6 @@
 
     const headers = {};
     if (twitchJwt) headers['X-Extension-JWT'] = twitchJwt;
-    if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
 
     try {
       const res = await fetch(ebsUrl + '/api/matches/lookup?' + params, { headers });
@@ -263,28 +272,29 @@
       // Re-render teams with talent data
       if (!detailOpen) return; // user navigated away
 
-      var mySection = document.getElementById('my-team-section');
-      var theirSection = document.getElementById('their-team-section');
+      const mySection = document.getElementById('my-team-section');
+      const theirSection = document.getElementById('their-team-section');
 
+      let isWin = false;
       if (match.teams && match.teams.length >= 2) {
         // Figure out which team is "mine" based on result
-        var myWin = gamesData.find(function(g) { return g.gameDate === game.gameDate; });
-        var isWin = myWin && myWin.result === 'win';
+        const myWin = gamesData.find(function(g) { return g.gameDate === game.gameDate; });
+        isWin = myWin && myWin.result === 'win';
 
-        for (var i = 0; i < match.teams.length; i++) {
-          var team = match.teams[i];
-          var isMyTeam = (isWin && team.win) || (!isWin && !team.win);
-          var targetEl = isMyTeam ? mySection : theirSection;
+        for (let i = 0; i < match.teams.length; i++) {
+          const team = match.teams[i];
+          const isMyTeam = (isWin && team.win) || (!isWin && !team.win);
+          const targetEl = isMyTeam ? mySection : theirSection;
           if (targetEl) {
             clearElement(targetEl);
-            var title = document.createElement('div');
+            const title = document.createElement('div');
             title.className = 'detail-team-label';
             title.textContent = isMyTeam ? 'Your Team' : 'Enemy Team';
             targetEl.appendChild(title);
 
-            for (var j = 0; j < team.players.length; j++) {
-              var p = team.players[j];
-              var isMe = game.myTeam.some(function(m) {
+            for (let j = 0; j < team.players.length; j++) {
+              const p = team.players[j];
+              const isMe = game.myTeam.some(function(m) {
                 return m.isMe && m.hero === p.hero;
               });
               targetEl.appendChild(renderDetailPlayer(p, isMe));
@@ -295,16 +305,16 @@
 
       // Render XP graph if data available
       if (match.xpTimeline && match.xpTimeline.length > 0) {
-        var graphSection = document.createElement('div');
+        const graphSection = document.createElement('div');
         graphSection.className = 'xp-graph-section';
-        var graphCanvas = document.createElement('canvas');
+        const graphCanvas = document.createElement('canvas');
         graphCanvas.id = 'overlay-xp-graph';
         graphSection.appendChild(graphCanvas);
         detailView.appendChild(graphSection);
 
-        var myTeamIdx = 0;
+        let myTeamIdx = 0;
         if (match.teams) {
-          for (var ti = 0; ti < match.teams.length; ti++) {
+          for (let ti = 0; ti < match.teams.length; ti++) {
             if ((isWin && match.teams[ti].win) || (!isWin && !match.teams[ti].win)) {
               myTeamIdx = match.teams[ti].teamIndex;
               break;
@@ -347,7 +357,7 @@
         const talentIcon = document.createElement('div');
         talentIcon.className = 'talent-icon';
 
-        if (t.icon) {
+        if (t.icon && isSafeUrl(t.icon)) {
           const img = document.createElement('img');
           img.src = t.icon;
           img.alt = t.name || '';
@@ -414,7 +424,6 @@
 
     const headers = {};
     if (twitchJwt) headers['X-Extension-JWT'] = twitchJwt;
-    if (authToken) headers['Authorization'] = 'Bearer ' + authToken;
 
     try {
       const res = await fetch(ebsUrl + '/api/recent-full?' + params, { headers });

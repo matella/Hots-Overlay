@@ -193,7 +193,7 @@
     const table = document.getElementById('matches-table');
     const pagination = document.getElementById('pagination');
 
-    tbody.innerHTML = '';
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
 
     if (!data.matches || data.matches.length === 0) {
       emptyEl.hidden = false;
@@ -296,7 +296,7 @@
 
   document.getElementById('matches-body').addEventListener('click', (e) => {
     const tr = e.target.closest('tr[data-match-id]');
-    if (tr) window.location.href = `/match.html?id=${tr.dataset.matchId}`;
+    if (tr) window.location.href = '/match.html?id=' + encodeURIComponent(tr.dataset.matchId);
   });
 
   // ── Mode select ────────────────────────────────────────────────────
@@ -307,7 +307,11 @@
       if (!res.ok) return;
       const data = await res.json();
       const select = document.getElementById('filter-mode');
-      select.innerHTML = '<option value="all">All Modes</option>';
+      while (select.firstChild) select.removeChild(select.firstChild);
+      const allOpt = document.createElement('option');
+      allOpt.value = 'all';
+      allOpt.textContent = 'All Modes';
+      select.appendChild(allOpt);
       for (const mode of (data.modes || [])) {
         const opt = document.createElement('option');
         opt.value = mode;

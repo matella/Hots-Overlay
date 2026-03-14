@@ -6,7 +6,8 @@ const IMAGE_BASE = TALENT_REPO + '/images/talents';
 
 // talentTreeId -> { name, icon, type }
 const talentMap = new Map();
-const loadedHeroes = new Set();
+// hero short name -> Promise (deduplicates concurrent loads, allows retry on failure)
+const loadingPromises = new Map();
 
 function fetchJSON(url) {
   return new Promise((resolve, reject) => {
@@ -24,25 +25,33 @@ function fetchJSON(url) {
 
 async function loadHero(heroName) {
   const short = normalizeHeroName(heroName);
-  if (loadedHeroes.has(short)) return;
-  loadedHeroes.add(short);
 
-  try {
-    const data = await fetchJSON(TALENT_REPO + '/hero/' + short + '.json');
-    for (const talents of Object.values(data.talents || {})) {
-      for (const t of talents) {
-        if (t.talentTreeId && t.icon) {
-          talentMap.set(t.talentTreeId, {
-            name: t.name || t.talentTreeId,
-            icon: IMAGE_BASE + '/' + t.icon,
-            type: t.type || null,
-          });
+  // Return existing promise if already loading/loaded
+  if (loadingPromises.has(short)) return loadingPromises.get(short);
+
+  const promise = (async () => {
+    try {
+      const data = await fetchJSON(TALENT_REPO + '/hero/' + short + '.json');
+      for (const talents of Object.values(data.talents || {})) {
+        for (const t of talents) {
+          if (t.talentTreeId && t.icon) {
+            talentMap.set(t.talentTreeId, {
+              name: t.name || t.talentTreeId,
+              icon: IMAGE_BASE + '/' + t.icon,
+              type: t.type || null,
+            });
+          }
         }
       }
+    } catch (err) {
+      // Remove from cache so it can be retried on next request
+      loadingPromises.delete(short);
+      console.error('[talentIcons] Failed to load ' + short + ':', err.message);
     }
-  } catch (err) {
-    console.error('[talentIcons] Failed to load ' + short + ':', err.message);
-  }
+  })();
+
+  loadingPromises.set(short, promise);
+  return promise;
 }
 
 async function loadHeroesForMatch(heroNames) {

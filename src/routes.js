@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const db = require('./database');
 const config = require('./config');
 const { getHeroImageUrl } = require('./heroNames');
@@ -13,6 +14,25 @@ const { Match } = require('./db/match.model');
 const { loadHeroesForMatch, resolveTalent } = require('./talentIcons');
 
 const router = express.Router();
+
+// --- Rate limiters ---
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,  // 1 minute
+  max: 120,             // 120 requests per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many uploads, please try again later.' },
+});
+
+router.use(apiLimiter);
 
 let broadcast = () => {};
 function init(broadcastFn) { broadcast = broadcastFn; }
@@ -50,8 +70,15 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
 });
 
+// Ensure a query parameter is a string (prevent type confusion from array/object injection)
+function asString(val) {
+  if (typeof val === 'string') return val;
+  if (Array.isArray(val)) return String(val[0] || '');
+  return val != null ? String(val) : '';
+}
+
 function resolveMode(query) {
-  const mode = query.mode;
+  const mode = asString(query.mode);
   if (!mode) return config.gameMode;
   if (mode.toLowerCase() === 'all') return db.ALL_MODES;
   const match = db.getAvailableModes().find(m => m.toLowerCase() === mode.toLowerCase());
@@ -61,7 +88,7 @@ function resolveMode(query) {
 // Returns an array of toon_handles, or null.
 // Supports: ?player=name, ?player=toon1,toon2, ?player=all
 function resolvePlayer(query) {
-  const player = query.player;
+  const player = asString(query.player);
   if (!player) return config.toonHandle ? [config.toonHandle] : null;
   if (player.toLowerCase() === 'all') return null; // null = all players (no filter)
   const parts = player.split(',').map(p => p.trim()).filter(Boolean);
@@ -117,7 +144,7 @@ router.get('/today', async (req, res) => {
     const stats = db.computeStats(games);
     res.json({ games, stats, mode, player: players });
   } catch (err) {
-    console.error(`[today] error: ${err.message}`);
+    console.error('[today] error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -143,7 +170,7 @@ router.get('/session/:date', async (req, res) => {
     const stats = db.computeStats(games);
     res.json({ date: req.params.date, games, stats, mode, player: players });
   } catch (err) {
-    console.error(`[session] error: ${err.message}`);
+    console.error('[session] error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -151,7 +178,7 @@ router.get('/session/:date', async (req, res) => {
 router.get('/sessions', (req, res) => {
   const players = resolvePlayer(req.query);
   const mode = resolveMode(req.query);
-  const parsed = parseInt(req.query.limit, 10);
+  const parsed = parseInt(asString(req.query.limit), 10);
   const limit = Math.min(Number.isNaN(parsed) ? 10 : parsed, 50);
   const sessions = db.getRecentSessions(players, limit, mode).map(session => ({
     ...session,
@@ -176,7 +203,7 @@ router.get('/recent', async (req, res) => {
   try {
     const players = resolvePlayer(req.query);
     const mode = resolveMode(req.query);
-    const parsedLimit = parseInt(req.query.limit, 10);
+    const parsedLimit = parseInt(asString(req.query.limit), 10);
     const limit = Math.min(Number.isNaN(parsedLimit) ? 10 : parsedLimit, 10);
 
     const query = {};
@@ -188,7 +215,7 @@ router.get('/recent', async (req, res) => {
     const stats = db.computeStats(games);
     res.json({ games, stats, mode, player: players });
   } catch (err) {
-    console.error(`[recent] error: ${err.message}`);
+    console.error('[recent] error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -203,7 +230,7 @@ router.get('/recent-full', requireExtJwt, (req, res) => {
   }
   const toonHandle = players[0];
   const mode = resolveMode(req.query);
-  const parsedLimit = parseInt(req.query.limit, 10);
+  const parsedLimit = parseInt(asString(req.query.limit), 10);
   const limit = Math.min(Number.isNaN(parsedLimit) ? 10 : parsedLimit, 10);
 
   const rawGames = db.getRecentGroupedGames(toonHandle, mode, limit);
@@ -261,30 +288,42 @@ router.get('/players', (_req, res) => {
 });
 
 router.get('/matches', async (req, res) => {
-  const page  = Math.max(1, parseInt(req.query.page,  10) || 1);
-  const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 20), 100);
+  const page  = Math.max(1, parseInt(asString(req.query.page),  10) || 1);
+  const limit = Math.min(Math.max(1, parseInt(asString(req.query.limit), 10) || 20), 100);
   const skip  = (page - 1) * limit;
 
   const filter = {};
 
   // Player filter — resolve name → toonHandle using existing db helper
-  if (req.query.player && req.query.player.toLowerCase() !== 'all') {
-    const toons = req.query.player.split(',')
+  const playerParam = asString(req.query.player);
+  if (playerParam && playerParam.toLowerCase() !== 'all') {
+    const toons = playerParam.split(',')
       .map(p => { const t = db.resolveToonHandle(p.trim()); return t || p.trim(); })
       .filter(Boolean);
     if (toons.length) filter['teams.players.toonHandle'] = { $in: toons };
   }
 
   // Mode filter
-  if (req.query.mode && req.query.mode.toLowerCase() !== 'all') {
-    filter.gameMode = req.query.mode;
+  const modeParam = asString(req.query.mode);
+  if (modeParam && modeParam.toLowerCase() !== 'all') {
+    filter.gameMode = modeParam;
   }
 
   // Date range filter (ISO strings or YYYY-MM-DD)
-  if (req.query.from || req.query.to) {
+  const fromParam = asString(req.query.from);
+  const toParam = asString(req.query.to);
+  if (fromParam || toParam) {
     filter.gameDate = {};
-    if (req.query.from) filter.gameDate.$gte = new Date(req.query.from);
-    if (req.query.to)   filter.gameDate.$lte = new Date(req.query.to);
+    if (fromParam) {
+      const fromDate = new Date(fromParam);
+      if (isNaN(fromDate.getTime())) return res.status(400).json({ error: 'Invalid from date' });
+      filter.gameDate.$gte = fromDate;
+    }
+    if (toParam) {
+      const toDate = new Date(toParam);
+      if (isNaN(toDate.getTime())) return res.status(400).json({ error: 'Invalid to date' });
+      filter.gameDate.$lte = toDate;
+    }
   }
 
   try {
@@ -323,8 +362,10 @@ router.get('/matches', async (req, res) => {
 });
 
 // Lookup a match by gameDate + map + duration (for extension detail view)
-router.get('/matches/lookup', async (req, res) => {
-  const { gameDate, map, duration } = req.query;
+router.get('/matches/lookup', requireExtJwt, async (req, res) => {
+  const gameDate = asString(req.query.gameDate);
+  const map = asString(req.query.map);
+  const duration = asString(req.query.duration);
   if (!gameDate || !map) return res.status(400).json({ error: 'gameDate and map required' });
 
   const filter = {
@@ -373,41 +414,57 @@ router.get('/matches/lookup', async (req, res) => {
 });
 
 router.get('/matches/:id', async (req, res) => {
-  const { id } = req.params;
-  if (!require('mongoose').Types.ObjectId.isValid(id)) {
-    return res.status(404).json({ error: 'Match not found' });
+  try {
+    const { id } = req.params;
+    if (!require('mongoose').Types.ObjectId.isValid(id)) {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+    const match = await Match.findById(id).lean().exec();
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+
+    const teams = match.teams.map(team => ({
+      teamIndex: team.teamIndex,
+      win: team.win,
+      bans: (team.bans || []).map(hero => ({ hero, heroImage: getHeroImageUrl(hero) })),
+      players: (team.players || []).map(p => ({
+        toonHandle: p.toonHandle,
+        playerName: p.playerName,
+        hero: p.hero,
+        heroShort: p.heroShort,
+        heroImage: getHeroImageUrl(p.hero),
+        talents: p.talents || [],
+      })),
+    }));
+
+    // Check if replay file exists (validate path is within replayDir first)
+    let hasReplay = false;
+    if (match.replayPath) {
+      try {
+        const safePath = ensurePathWithin(config.replayDir, match.replayPath);
+        await fs.promises.access(safePath);
+        hasReplay = true;
+      } catch {}
+    }
+
+    res.json({
+      id: match._id,
+      gameDate: match.gameDate,
+      map: match.map,
+      mapImage: getMapImageUrl(match.map),
+      gameMode: match.gameMode,
+      duration: match.duration,
+      hasReplay,
+      teams,
+      events: match.events || [],
+      xpTimeline: match.xpTimeline || [],
+    });
+  } catch (err) {
+    if (err.name === 'CastError') {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+    console.error('[matches/:id] error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  const match = await Match.findById(id).lean().exec();
-  if (!match) return res.status(404).json({ error: 'Match not found' });
-
-  const teams = match.teams.map(team => ({
-    teamIndex: team.teamIndex,
-    win: team.win,
-    bans: (team.bans || []).map(hero => ({ hero, heroImage: getHeroImageUrl(hero) })),
-    players: (team.players || []).map(p => ({
-      toonHandle: p.toonHandle,
-      playerName: p.playerName,
-      hero: p.hero,
-      heroShort: p.heroShort,
-      heroImage: getHeroImageUrl(p.hero),
-      talents: p.talents || [],
-    })),
-  }));
-
-  res.json({
-    id: match._id,
-    fingerprint: match.fingerprint,
-    filename: match.filename,
-    gameDate: match.gameDate,
-    map: match.map,
-    mapImage: getMapImageUrl(match.map),
-    gameMode: match.gameMode,
-    duration: match.duration,
-    hasReplay: !!(match.replayPath && fs.existsSync(match.replayPath)),
-    teams,
-    events: match.events || [],
-    xpTimeline: match.xpTimeline || [],
-  });
 });
 
 router.get('/matches/:id/replay', checkAuth, async (req, res) => {
@@ -416,13 +473,24 @@ router.get('/matches/:id/replay', checkAuth, async (req, res) => {
     if (!match || !match.replayPath) {
       return res.status(404).json({ error: 'Replay file not available on this server' });
     }
-    if (!fs.existsSync(match.replayPath)) {
+    // Validate stored path is within replay directory
+    let safePath;
+    try {
+      safePath = ensurePathWithin(config.replayDir, match.replayPath);
+    } catch {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+    try {
+      await fs.promises.access(safePath);
+    } catch {
       return res.status(404).json({ error: 'Replay file not available on this server' });
     }
-    const filename = match.filename || path.basename(match.replayPath);
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    const filename = match.filename || path.basename(safePath);
+    // Sanitize filename for Content-Disposition header
+    const safeFilename = filename.replace(/[^a-zA-Z0-9 ._\-()]/g, '_');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
-    fs.createReadStream(match.replayPath).pipe(res);
+    fs.createReadStream(safePath).pipe(res);
   } catch (err) {
     if (err.name === 'CastError') {
       return res.status(404).json({ error: 'Match not found' });
@@ -437,6 +505,21 @@ function isValidFilename(filename) {
   return /^[a-zA-Z0-9 ._\-()]+\.StormReplay$/.test(filename) && !filename.includes('..');
 }
 
+// Ensure a resolved path stays within the allowed directory.
+// Uses case-insensitive comparison on Windows to handle drive letter casing.
+function ensurePathWithin(dir, filePath) {
+  const resolved = path.resolve(filePath);
+  const resolvedDir = path.resolve(dir) + path.sep;
+  const isWin = process.platform === 'win32';
+  const normResolved = isWin ? resolved.toLowerCase() : resolved;
+  const normDir = isWin ? resolvedDir.toLowerCase() : resolvedDir;
+  const normDirExact = isWin ? path.resolve(dir).toLowerCase() : path.resolve(dir);
+  if (!normResolved.startsWith(normDir) && normResolved !== normDirExact) {
+    throw new Error('Path traversal attempt blocked');
+  }
+  return resolved;
+}
+
 function cleanupTempFile(filePath, dest) {
   if (filePath !== dest) {
     try { fs.unlinkSync(filePath); } catch {}
@@ -444,7 +527,7 @@ function cleanupTempFile(filePath, dest) {
 }
 
 async function processReplayFile(filename, filePath, res) {
-  const dest = path.join(config.replayDir, filename);
+  const dest = ensurePathWithin(config.replayDir, path.join(config.replayDir, filename));
 
   if (db.replayExists(filename)) {
     console.log(`[upload] ${filename}: duplicate`);
@@ -582,7 +665,7 @@ async function processReplayFile(filename, filePath, res) {
 }
 
 // Multipart upload (for curl / browser forms)
-router.post('/upload', checkAuth, upload.single('replay'), async (req, res) => {
+router.post('/upload', uploadLimiter, checkAuth, upload.single('replay'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No .StormReplay file provided.' });
   }
@@ -595,9 +678,14 @@ router.post('/upload', checkAuth, upload.single('replay'), async (req, res) => {
 
 // Raw binary upload (for the Rust client)
 const rawUploadParser = express.raw({ type: '*/*', limit: '10mb' });
-router.post('/upload-raw', checkAuth, rawUploadParser, async (req, res) => {
+router.post('/upload-raw', uploadLimiter, checkAuth, rawUploadParser, async (req, res) => {
   const rawFilename = req.headers['x-filename'];
-  const filename = rawFilename ? decodeURIComponent(rawFilename) : null;
+  let filename = null;
+  try {
+    filename = rawFilename ? decodeURIComponent(rawFilename) : null;
+  } catch {
+    return res.status(400).json({ error: 'Invalid X-Filename header encoding.' });
+  }
   if (!filename || !isValidFilename(filename)) {
     return res.status(400).json({ error: 'Missing or invalid X-Filename header.' });
   }
@@ -629,13 +717,14 @@ router.post('/upload-raw', checkAuth, rawUploadParser, async (req, res) => {
     }
   }
 
-  // Write to temp file
-  const tempPath = path.join(config.replayDir, `_upload_${crypto.randomBytes(8).toString('hex')}`);
+  // Write to temp file (path is server-generated, not user-controlled)
+  const tempName = `_upload_${crypto.randomBytes(8).toString('hex')}`;
+  const tempPath = ensurePathWithin(config.replayDir, path.join(config.replayDir, tempName));
   try {
     fs.writeFileSync(tempPath, body);
   } catch (err) {
-    console.error(`[upload-raw] ${filename}: write failed: ${err.message}`);
-    return res.status(500).json({ error: `File write failed: ${err.message}` });
+    console.error('[upload-raw] write failed:', err.message);
+    return res.status(500).json({ error: 'File write failed' });
   }
 
   await processReplayFile(filename, tempPath, res);

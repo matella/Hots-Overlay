@@ -171,17 +171,19 @@ function extractEvents(result) {
 }
 
 function parseReplay(filePath) {
-  const filename = path.basename(filePath);
+  // Resolve to absolute path and validate it exists
+  const resolvedPath = path.resolve(filePath);
+  const filename = path.basename(resolvedPath);
 
   try {
-    fs.statSync(filePath);
+    fs.statSync(resolvedPath);
   } catch (err) {
     return { error: `File stat failed: ${err.message}` };
   }
 
   let result;
   try {
-    result = Parser.processReplay(filePath, { getBMData: false, overrideVerifiedBuild: true, legacyTalentKeys: false });
+    result = Parser.processReplay(resolvedPath, { getBMData: false, overrideVerifiedBuild: true, legacyTalentKeys: false });
   } catch (err) {
     return { error: `Parser exception: ${err.message}` };
   }
@@ -261,7 +263,7 @@ function parseReplay(filePath) {
   const matchDoc = {
     fingerprint: gameFingerprint,
     filename,
-    replayPath: filePath,
+    replayPath: resolvedPath,
     gameDate: new Date(gameDate),
     map,
     gameMode,
@@ -284,7 +286,8 @@ function yieldToEventLoop() {
 }
 
 async function scanAndParseAll(replayDir, onProgress) {
-  const files = fs.readdirSync(replayDir)
+  const resolvedDir = path.resolve(replayDir);
+  const files = fs.readdirSync(resolvedDir)
     .filter(f => f.endsWith('.StormReplay'));
 
   const processed = db.getAllProcessedFilenames();
@@ -299,7 +302,7 @@ async function scanAndParseAll(replayDir, onProgress) {
     const parsed = [];
     for (const file of batch) {
       try {
-        const result = parseReplay(path.join(replayDir, file));
+        const result = parseReplay(path.join(resolvedDir, file));
         parsed.push({ file, result });
       } catch (err) {
         console.error(`Failed to process ${file}:`, err.message);
