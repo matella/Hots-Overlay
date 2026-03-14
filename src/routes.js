@@ -257,6 +257,43 @@ router.get('/matches', async (req, res) => {
   }
 });
 
+router.get('/matches/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!require('mongoose').Types.ObjectId.isValid(id)) {
+    return res.status(404).json({ error: 'Match not found' });
+  }
+  const match = await Match.findById(id).lean().exec();
+  if (!match) return res.status(404).json({ error: 'Match not found' });
+
+  const teams = match.teams.map(team => ({
+    teamIndex: team.teamIndex,
+    win: team.win,
+    bans: (team.bans || []).map(hero => ({ hero, heroImage: getHeroImageUrl(hero) })),
+    players: (team.players || []).map(p => ({
+      toonHandle: p.toonHandle,
+      playerName: p.playerName,
+      hero: p.hero,
+      heroShort: p.heroShort,
+      heroImage: getHeroImageUrl(p.hero),
+      talents: p.talents || [],
+    })),
+  }));
+
+  res.json({
+    id: match._id,
+    fingerprint: match.fingerprint,
+    filename: match.filename,
+    gameDate: match.gameDate,
+    map: match.map,
+    mapImage: getMapImageUrl(match.map),
+    gameMode: match.gameMode,
+    duration: match.duration,
+    hasReplay: Boolean(match.replayPath),
+    teams,
+    events: match.events || [],
+  });
+});
+
 // Validate filename to prevent path traversal
 function isValidFilename(filename) {
   return /^[a-zA-Z0-9 ._\-()]+\.StormReplay$/.test(filename) && !filename.includes('..');
