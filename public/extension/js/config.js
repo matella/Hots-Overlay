@@ -8,9 +8,12 @@
   const saveBtn = document.getElementById('save-btn');
   const statusEl = document.getElementById('status');
 
+  let twitchJwt = null;
+
   // ─── Load existing config ────────────────────────────────────────
 
-  window.Twitch.ext.onAuthorized(() => {
+  window.Twitch.ext.onAuthorized((auth) => {
+    twitchJwt = auth.token;
     const cfg = window.Twitch.ext.configuration.broadcaster;
     if (cfg && cfg.content) {
       try {
