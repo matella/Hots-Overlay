@@ -230,6 +230,129 @@
         }
       }
     },
+    "/matches": {
+      "get": {
+        "summary": "Paginated match list",
+        "description": "Returns a paginated list of full match documents from MongoDB, including both teams' heroes (with image URLs), bans, win/loss, game mode, date, and duration. Sorted by game date descending.",
+        "tags": ["Matches"],
+        "parameters": [
+          { "$ref": "#/components/parameters/player" },
+          { "$ref": "#/components/parameters/mode" },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" },
+            "description": "Filter matches on or after this date (ISO 8601 or YYYY-MM-DD)",
+            "example": "2025-01-01"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" },
+            "description": "Filter matches on or before this date (ISO 8601 or YYYY-MM-DD)",
+            "example": "2025-12-31"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": { "type": "integer", "default": 1, "minimum": 1 },
+            "description": "Page number (1-based)"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 100 },
+            "description": "Number of matches per page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated match list",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MatchesResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "Query failed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/matches/{id}": {
+      "get": {
+        "summary": "Match detail",
+        "description": "Returns full match data for a single match by MongoDB ObjectId, including `hasReplay` indicating whether the .StormReplay file is available on this server.",
+        "tags": ["Matches"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "MongoDB ObjectId of the match"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Match detail with replay availability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Match" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "filename": { "type": "string", "nullable": true },
+                        "hasReplay": { "type": "boolean", "description": "True if the .StormReplay file is present on this server" },
+                        "mapImage": { "type": "string", "format": "uri" },
+                        "events": { "type": "array", "items": { "type": "object" } }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": { "description": "Match not found" }
+        }
+      }
+    },
+    "/matches/{id}/replay": {
+      "get": {
+        "summary": "Download replay file",
+        "description": "Streams the .StormReplay file for the given match as an attachment download. Returns 404 if the file is not available on this server.",
+        "tags": ["Matches"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "MongoDB ObjectId of the match"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ".StormReplay binary file",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "404": { "description": "Replay file not available on this server" }
+        }
+      }
+    },
     "/upload": {
       "post": {
         "summary": "Upload replay (multipart)",
@@ -366,6 +489,47 @@
           "stats": { "$ref": "#/components/schemas/Stats" },
           "mode": { "type": "string" },
           "player": { "type": "string" }
+        }
+      },
+      "MatchPlayer": {
+        "type": "object",
+        "properties": {
+          "toonHandle": { "type": "string", "example": "2-Hero-1-2844614" },
+          "playerName": { "type": "string", "example": "matella" },
+          "hero": { "type": "string", "example": "Johanna" },
+          "heroShort": { "type": "string", "example": "johanna" },
+          "heroImage": { "type": "string", "format": "uri" }
+        }
+      },
+      "MatchTeam": {
+        "type": "object",
+        "properties": {
+          "teamIndex": { "type": "integer", "enum": [0, 1], "description": "0 = blue, 1 = red" },
+          "win": { "type": "boolean" },
+          "bans": { "type": "array", "items": { "type": "string" }, "example": ["Abathur", "Murky"] },
+          "players": { "type": "array", "items": { "$ref": "#/components/schemas/MatchPlayer" } }
+        }
+      },
+      "Match": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "MongoDB ObjectId" },
+          "fingerprint": { "type": "string" },
+          "gameDate": { "type": "string", "format": "date-time" },
+          "map": { "type": "string", "example": "Towers of Doom" },
+          "gameMode": { "type": "string", "example": "Storm League" },
+          "duration": { "type": "integer", "description": "Game duration in seconds" },
+          "teams": { "type": "array", "items": { "$ref": "#/components/schemas/MatchTeam" } }
+        }
+      },
+      "MatchesResponse": {
+        "type": "object",
+        "properties": {
+          "matches": { "type": "array", "items": { "$ref": "#/components/schemas/Match" } },
+          "total": { "type": "integer", "description": "Total number of matches matching the filters" },
+          "page": { "type": "integer", "description": "Current page number" },
+          "pages": { "type": "integer", "description": "Total number of pages" },
+          "limit": { "type": "integer", "description": "Page size used for this response" }
         }
       },
       "UploadResult": {

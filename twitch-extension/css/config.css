@@ -1,0 +1,103 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #18181b;
+  color: #efeff1;
+  padding: 20px;
+  font-size: 13px;
+}
+
+.config-panel {
+  max-width: 400px;
+}
+
+h2 {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: #bf94ff;
+}
+
+.subtitle {
+  color: #adadb8;
+  margin-bottom: 20px;
+  font-size: 12px;
+}
+
+.field {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+label {
+  font-weight: 600;
+  font-size: 12px;
+  color: #dedee3;
+}
+
+.optional {
+  font-weight: 400;
+  color: #adadb8;
+}
+
+input, select {
+  background: #0e0e10;
+  border: 1px solid #3a3a3d;
+  border-radius: 4px;
+  color: #efeff1;
+  padding: 7px 10px;
+  font-size: 13px;
+  width: 100%;
+  outline: none;
+}
+
+input:focus, select:focus {
+  border-color: #9147ff;
+}
+
+.hint {
+  color: #adadb8;
+  font-size: 11px;
+}
+
+button {
+  background: #9147ff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 9px 20px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+button:hover { background: #772ce8; }
+button:active { background: #5c16c5; }
+
+.status {
+  margin-top: 10px;
+  font-size: 12px;
+  min-height: 16px;
+}
+
+.status.ok    { color: #4ade80; }
+.status.error { color: #f87171; }
+
+.field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-inline input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #9147ff;
+  flex-shrink: 0;
+}
+
+.field-inline label { margin: 0; }
