@@ -1,4 +1,28 @@
 services:
+  mongo:
+    image: mongo:8
+    volumes:
+      - ./data/mongo:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  mongo-express:
+    image: mongo-express:1.0.2
+    ports:
+      - "8081:8081"
+    environment:
+      - ME_CONFIG_MONGODB_SERVER=mongo
+      - ME_CONFIG_BASICAUTH=false
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
   overlay:
     build: .
     ports:
@@ -14,6 +38,10 @@ services:
       - GAME_MODE=${GAME_MODE:-Storm League}
       - MODE_LABEL_Custom=${MODE_LABEL_Custom:-}
       - TZ=${TZ:-America/New_York}
+      - MONGODB_URI=${MONGODB_URI:-mongodb://mongo:27017/hots-overlay}
+    depends_on:
+      mongo:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
