@@ -221,45 +221,49 @@ function _fetchAndBroadcast(baseUrl, channelId, toonHandle, gameMode) {
     .catch(err => console.error('[ebs] fetch/broadcast failed:', err.message));
 }
 
-const _WS_BACKOFF = [2000, 5000, 15000, 30000];
+// Send a fire-and-forget HTTP/HTTPS POST to an external EBS webhook URL.
+function webhookPost(url, payload) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify(payload);
+    const mod = url.startsWith('https') ? require('https') : require('http');
+    const parsed = new URL(url);
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port || (url.startsWith('https') ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+    };
+    const req = mod.request(options, res => {
+      res.resume(); // drain to release the socket
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        console.log(`[ebs] webhook POST ${url} => HTTP ${res.statusCode}`);
+        resolve();
+      } else {
+        reject(new Error(`webhook POST ${url} failed: HTTP ${res.statusCode}`));
+      }
+    });
+    req.on('error', reject);
+    req.setTimeout(5000, () => req.destroy(new Error('webhook POST timeout')));
+    req.write(body);
+    req.end();
+  });
+}
 
-// Start fetching game data from the HotS Overlay server and forwarding to Twitch PubSub.
-// Call this once after the HTTP server is listening (so /api/today and the WebSocket are ready).
+// Directly trigger a PubSub broadcast for a new game without going through a WebSocket.
+// Called by server.js after onNewReplay() so the EBS and OBS broadcast share the same call path.
+function notifyNewGame(baseUrl, channelId, toonHandle, gameMode) {
+  _fetchAndBroadcast(baseUrl, channelId, toonHandle, gameMode);
+}
+
+// Start the EBS: fetch /api/today on startup and broadcast initial session stats.
+// Real-time new_game events are pushed directly via notifyNewGame() from server.js.
 function startDataFetcher(baseUrl, channelId, toonHandle, gameMode) {
   console.log(`[ebs] startDataFetcher baseUrl=${baseUrl} channel=${channelId}`);
   _fetchAndBroadcast(baseUrl, channelId, toonHandle, gameMode);
-
-  let attempt = 0;
-  function connect() {
-    const WebSocket = require('ws');
-    const wsUrl = baseUrl.replace(/^http/, 'ws');
-    const ws = new WebSocket(wsUrl);
-
-    ws.on('open', () => {
-      console.log('[ebs] WebSocket connected to overlay server');
-      attempt = 0;
-    });
-
-    ws.on('message', raw => {
-      try {
-        const msg = JSON.parse(raw);
-        if (msg.type === 'new_game') {
-          console.log('[ebs] new_game event — re-fetching /api/today');
-          _fetchAndBroadcast(baseUrl, channelId, toonHandle, gameMode);
-        }
-      } catch {}
-    });
-
-    ws.on('close', () => {
-      const delay = _WS_BACKOFF[Math.min(attempt++, _WS_BACKOFF.length - 1)];
-      console.warn(`[ebs] WS closed, reconnecting in ${delay}ms`);
-      setTimeout(connect, delay);
-    });
-
-    ws.on('error', err => console.error('[ebs] WS error:', err.message));
-  }
-
-  connect();
 }
 
-module.exports = { verifyExtensionJWT, createEBSJWT, sendPubSubMessage, startDataFetcher };
+module.exports = { verifyExtensionJWT, createEBSJWT, sendPubSubMessage, startDataFetcher, notifyNewGame, webhookPost };
