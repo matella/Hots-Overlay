@@ -294,6 +294,28 @@ router.get('/matches/:id', async (req, res) => {
   });
 });
 
+router.get('/matches/:id/replay', checkAuth, async (req, res) => {
+  try {
+    const match = await Match.findById(req.params.id).select('replayPath filename');
+    if (!match || !match.replayPath) {
+      return res.status(404).json({ error: 'Replay file not available on this server' });
+    }
+    if (!fs.existsSync(match.replayPath)) {
+      return res.status(404).json({ error: 'Replay file not available on this server' });
+    }
+    const filename = match.filename || path.basename(match.replayPath);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    fs.createReadStream(match.replayPath).pipe(res);
+  } catch (err) {
+    if (err.name === 'CastError') {
+      return res.status(404).json({ error: 'Match not found' });
+    }
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+
 // Validate filename to prevent path traversal
 function isValidFilename(filename) {
   return /^[a-zA-Z0-9 ._\-()]+\.StormReplay$/.test(filename) && !filename.includes('..');
