@@ -1,6 +1,4 @@
-const IMAGE_BASE = 'https://raw.githubusercontent.com/heroespatchnotes/heroes-talents/master/images/maps';
-
-// Map display names to their short/file names in the CDN
+// Map images served locally from public/images/maps/
 const MAP_NAMES = {
   'Alterac Pass': 'alteracpass',
   'Battlefield of Eternity': 'battlefieldofeternity',
@@ -9,7 +7,7 @@ const MAP_NAMES = {
   'Cursed Hollow': 'cursedhollow',
   'Dragon Shire': 'dragonshire',
   'Garden of Terror': 'gardenofterror',
-  'Hanamura Temple': 'hanamurasimulator',
+  'Hanamura Temple': 'hanamuratemple',
   'Infernal Shrines': 'infernalshrines',
   'Lost Cavern': 'lostcavern',
   'Sky Temple': 'skytemple',
@@ -22,7 +20,7 @@ const MAP_NAMES = {
 function getMapImageUrl(mapName) {
   const key = MAP_NAMES[mapName];
   if (!key) return null;
-  return `${IMAGE_BASE}/${key}.jpg`;
+  return `/images/maps/${key}.webp`;
 }
 
 module.exports = { getMapImageUrl };

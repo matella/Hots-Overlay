@@ -10,6 +10,7 @@ const { getMapImageUrl } = require('./mapImages');
 const { parseReplay } = require('./parser');
 const { verifyExtensionJWT } = require('./twitch');
 const { Match } = require('./db/match.model');
+const { loadHeroesForMatch, resolveTalent } = require('./talentIcons');
 
 const router = express.Router();
 
@@ -18,8 +19,8 @@ function init(broadcastFn) { broadcast = broadcastFn; }
 
 // --- Extension JWT middleware (required — verifies Twitch viewer identity via Authorization header) ---
 function requireExtJwt(req, res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const header = req.headers['x-extension-jwt'] || req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : header || null;
   if (!token) return res.status(401).json({ error: 'Missing Authorization header' });
   try {
     const decoded = verifyExtensionJWT(token);
@@ -321,6 +322,56 @@ router.get('/matches', async (req, res) => {
   }
 });
 
+// Lookup a match by gameDate + map + duration (for extension detail view)
+router.get('/matches/lookup', async (req, res) => {
+  const { gameDate, map, duration } = req.query;
+  if (!gameDate || !map) return res.status(400).json({ error: 'gameDate and map required' });
+
+  const filter = {
+    map,
+    gameDate: new Date(gameDate),
+  };
+  if (duration) filter.duration = parseFloat(duration);
+
+  try {
+    const match = await Match.findOne(filter).lean();
+    if (!match) return res.status(404).json({ error: 'Match not found' });
+
+    // Load talent icons for all heroes in this match
+    const heroNames = match.teams.flatMap(t => t.players.map(p => p.hero));
+    await loadHeroesForMatch(heroNames);
+
+    const teams = match.teams.map(team => ({
+      teamIndex: team.teamIndex,
+      win: team.win,
+      bans: (team.bans || []).map(hero => ({ hero, heroImage: getHeroImageUrl(hero) })),
+      players: (team.players || []).map(p => ({
+        toonHandle: p.toonHandle,
+        playerName: p.playerName,
+        hero: p.hero,
+        heroShort: p.heroShort,
+        heroImage: getHeroImageUrl(p.hero),
+        talents: (p.talents || []).map(resolveTalent),
+      })),
+    }));
+
+    res.json({
+      id: match._id,
+      gameDate: match.gameDate,
+      map: match.map,
+      mapImage: getMapImageUrl(match.map),
+      gameMode: match.gameMode,
+      duration: match.duration,
+      teams,
+      events: match.events || [],
+      xpTimeline: match.xpTimeline || [],
+    });
+  } catch (err) {
+    console.error('[matches/lookup] failed:', err.message);
+    res.status(500).json({ error: 'Lookup failed' });
+  }
+});
+
 router.get('/matches/:id', async (req, res) => {
   const { id } = req.params;
   if (!require('mongoose').Types.ObjectId.isValid(id)) {
@@ -355,6 +406,7 @@ router.get('/matches/:id', async (req, res) => {
     hasReplay: !!(match.replayPath && fs.existsSync(match.replayPath)),
     teams,
     events: match.events || [],
+    xpTimeline: match.xpTimeline || [],
   });
 });
 

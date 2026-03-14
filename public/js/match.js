@@ -285,6 +285,24 @@
     }
   }
 
+  // ── XP Graph ────────────────────────────────────────────────────────
+
+  function renderXpGraph(match) {
+    const section = document.getElementById('section-xp-graph');
+    const canvas = document.getElementById('xp-graph-canvas');
+    if (!canvas || !match.xpTimeline || match.xpTimeline.length === 0) {
+      if (section) section.hidden = true;
+      return;
+    }
+    // Determine which team is "mine" — use team 0 by default for the public page
+    drawXpGraph(canvas, {
+      xpTimeline: match.xpTimeline,
+      events: match.events || [],
+      duration: match.duration,
+      myTeam: 0,
+    });
+  }
+
   // ── Replay section (upload / download) ──────────────────────────────
 
   function renderReplaySection(match) {
@@ -368,6 +386,7 @@
       for (const team of teams) renderTeamColumn(team);
 
       renderTalentBuilds(match);
+      renderXpGraph(match);
       renderTimeline(match);
 
       document.getElementById('loading-state').hidden = true;

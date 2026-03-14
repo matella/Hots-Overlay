@@ -35,12 +35,12 @@ const GAME_MODE_STRINGS = {
 
 const TIER_MAP = {
   Tier1Choice: 1,
-  Tier4Choice: 4,
-  Tier7Choice: 7,
-  Tier10Choice: 10,
-  Tier13Choice: 13,
-  Tier16Choice: 16,
-  Tier20Choice: 20,
+  Tier2Choice: 4,
+  Tier3Choice: 7,
+  Tier4Choice: 10,
+  Tier5Choice: 13,
+  Tier6Choice: 16,
+  Tier7Choice: 20,
 };
 
 function extractTalents(rawTalents) {
@@ -51,6 +51,27 @@ function extractTalents(rawTalents) {
     .sort((a, b) => a.tier - b.tier);
 }
 
+function extractXpTimeline(xpBreakdown) {
+  if (!Array.isArray(xpBreakdown) || xpBreakdown.length === 0) return [];
+  const byTime = new Map();
+  for (const entry of xpBreakdown) {
+    const t = entry.time;
+    if (!byTime.has(t)) byTime.set(t, {});
+    const bd = entry.breakdown || {};
+    const total = (bd.MinionXP || 0) + (bd.CreepXP || 0) +
+                  (bd.StructureXP || 0) + (bd.HeroXP || 0) + (bd.TrickleXP || 0);
+    byTime.get(t)[entry.team] = total;
+  }
+  const timeline = [];
+  for (const [time, teams] of byTime) {
+    const t0 = teams[0] || 0;
+    const t1 = teams[1] || 0;
+    timeline.push({ time, lead: Math.round(t0 - t1) });
+  }
+  timeline.sort((a, b) => a.time - b.time);
+  return timeline;
+}
+
 function extractEvents(result) {
   const events = [];
   const loopGameStart = result.match.loopGameStart || 0;
@@ -58,7 +79,7 @@ function extractEvents(result) {
   // Build toonHandle → 0-indexed team map
   const playerTeam = {};
   for (const [toon, p] of Object.entries(result.players || {})) {
-    if (p && typeof p.team === 'number') playerTeam[toon] = p.team - 1;
+    if (p && typeof p.team === 'number') playerTeam[toon] = p.team;
   }
 
   // Kill events
@@ -125,6 +146,26 @@ function extractEvents(result) {
     }
   }
 
+  // Merc capture events
+  const mercs = result.match.mercs;
+  if (mercs) {
+    for (const teamIdx of [0, 1]) {
+      const teamMercs = mercs[teamIdx];
+      if (!teamMercs || !Array.isArray(teamMercs.events)) continue;
+      for (const ev of teamMercs.events) {
+        if (typeof ev.time !== 'number') continue;
+        events.push({
+          type: 'merc_capture',
+          time: ev.time,
+          team: ev.team ?? teamIdx,
+          subject: null,
+          target: null,
+          details: { name: ev.type || 'Mercenary' },
+        });
+      }
+    }
+  }
+
   events.sort((a, b) => a.time - b.time);
   return events;
 }
@@ -173,7 +214,7 @@ function parseReplay(filePath) {
       win: player.win ? 1 : 0,
       duration,
       playerName: player.name,
-      teamIndex: player.team != null ? player.team - 1 : null,
+      teamIndex: player.team != null ? player.team : null,
       talents: extractTalents(player.talents),
     });
   }
@@ -208,6 +249,7 @@ function parseReplay(filePath) {
   }
 
   const events = extractEvents(result);
+  const xpTimeline = extractXpTimeline(result.match.XPBreakdown);
 
   const toSchemaPlayer = (p) => ({
     toonHandle: p.toonHandle,
@@ -231,9 +273,10 @@ function parseReplay(filePath) {
       players: t.players.map(toSchemaPlayer),
     })),
     events,
+    xpTimeline,
   };
 
-  return { players, teams, gameFingerprint, events, matchDoc };
+  return { players, teams, gameFingerprint, events, xpTimeline, matchDoc };
 }
 
 function yieldToEventLoop() {

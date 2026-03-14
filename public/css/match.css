@@ -474,6 +474,17 @@ body {
   flex-shrink: 0;
 }
 
+/* ── XP Graph ──────────────────────────────────────────── */
+
+.xp-graph-container {
+  position: relative;
+  width: 100%;
+}
+.xp-graph-container canvas {
+  width: 100%;
+  display: block;
+}
+
 /* ── Timeline ───────────────────────────────────────────── */
 
 .timeline-list {

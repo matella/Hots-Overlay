@@ -45,7 +45,7 @@ app.use(cors({
     callback(Object.assign(new Error('CORS: origin not allowed'), { status: 403 }));
   },
   methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Filename', 'X-Content-Encoding', 'X-Content-Sha256'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Extension-JWT', 'X-Filename', 'X-Content-Encoding', 'X-Content-Sha256'],
 }));
 
 app.use(express.static(path.join(__dirname, 'public')));

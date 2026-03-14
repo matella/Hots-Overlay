@@ -49,6 +49,14 @@ const EventSchema = new Schema(
   { _id: false },
 );
 
+const XpPointSchema = new Schema(
+  {
+    time: { type: Number },
+    lead: { type: Number },
+  },
+  { _id: false },
+);
+
 // ---------------------------------------------------------------------------
 // Top-level Match schema
 // ---------------------------------------------------------------------------
@@ -64,6 +72,7 @@ const MatchSchema = new Schema(
     duration: { type: Number },
     teams: { type: [TeamSchema], default: [] },
     events: { type: [EventSchema], default: [] },
+    xpTimeline: { type: [XpPointSchema], default: [] },
   },
   {
     timestamps: true,
@@ -95,4 +104,5 @@ module.exports = {
   PlayerSchema,
   TalentSchema,
   EventSchema,
+  XpPointSchema,
 };
