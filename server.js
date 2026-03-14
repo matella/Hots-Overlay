@@ -9,6 +9,7 @@ const path = require('path');
 const config = require('./src/config');
 console.log(`[startup] Config loaded — port=${config.port}, replayDir=${config.replayDir}`);
 const db = require('./src/database');
+const mongo = require('./src/db/connection');
 const { parseReplay, scanAndParseAll } = require('./src/parser');
 const { startWatcher } = require('./src/watcher');
 const { getHeroImageUrl } = require('./src/heroNames');
@@ -21,6 +22,16 @@ fs.mkdirSync(config.replayDir, { recursive: true });
 console.log('[startup] Initializing database...');
 db.initDatabase();
 console.log('[startup] Database ready');
+
+mongo.connect();
+
+async function shutdown(signal) {
+  console.log(`[server] ${signal} received, shutting down...`);
+  await mongo.disconnect();
+  process.exit(0);
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 const app = express();
 
