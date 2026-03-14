@@ -24,6 +24,12 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.07);
 }
 
+/* ─── Position variants ──────────────────────────────────────────── */
+#portrait-overlay.pos-bottom-left  { bottom: 12px; left: 12px;  top: auto;    right: auto;  }
+#portrait-overlay.pos-bottom-right { bottom: 12px; right: 12px; top: auto;    left: auto;   }
+#portrait-overlay.pos-top-left     { top: 12px;    left: 12px;  bottom: auto; right: auto;  }
+#portrait-overlay.pos-top-right    { top: 12px;    right: 12px; bottom: auto; left: auto;   }
+
 /* ─── Stats bar ──────────────────────────────────────────────────── */
 #stats-bar {
   display: flex;

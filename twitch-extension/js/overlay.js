@@ -169,6 +169,7 @@
   window.Twitch.ext.onAuthorized(async () => {
     // Read broadcaster configuration saved via config.html
     const cfg = window.Twitch.ext.configuration.broadcaster;
+    const overlay = document.getElementById('portrait-overlay');
     if (cfg && cfg.content) {
       try {
         const saved = JSON.parse(cfg.content);
@@ -176,6 +177,15 @@
         authToken  = saved.authToken  || null;
         player     = saved.player     || null;
         gameMode   = saved.gameMode   || null;
+
+        if (overlay) {
+          if (saved.hidden) {
+            overlay.style.display = 'none';
+          } else {
+            overlay.style.display = '';
+            overlay.className = 'pos-' + (saved.position || 'bottom-left');
+          }
+        }
       } catch {}
     }
 

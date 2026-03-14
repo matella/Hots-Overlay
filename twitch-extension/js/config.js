@@ -1,12 +1,14 @@
 (function () {
   'use strict';
 
-  const serverUrlEl = document.getElementById('server-url');
-  const authTokenEl = document.getElementById('auth-token');
-  const playerEl = document.getElementById('player');
-  const gameModeEl = document.getElementById('game-mode');
-  const saveBtn = document.getElementById('save-btn');
-  const statusEl = document.getElementById('status');
+  const serverUrlEl       = document.getElementById('server-url');
+  const authTokenEl       = document.getElementById('auth-token');
+  const playerEl          = document.getElementById('player');
+  const gameModeEl        = document.getElementById('game-mode');
+  const overlayPositionEl = document.getElementById('overlay-position');
+  const overlayHiddenEl   = document.getElementById('overlay-hidden');
+  const saveBtn           = document.getElementById('save-btn');
+  const statusEl          = document.getElementById('status');
 
   // ─── Load existing config ────────────────────────────────────────
 
@@ -19,6 +21,8 @@
         if (saved.authToken) authTokenEl.value = saved.authToken;
         if (saved.player) playerEl.value = saved.player;
         if (saved.gameMode) gameModeEl.value = saved.gameMode;
+        if (saved.position) overlayPositionEl.value = saved.position;
+        overlayHiddenEl.checked = !!saved.hidden;
       } catch {}
     }
   });
@@ -37,6 +41,8 @@
       authToken: authTokenEl.value.trim() || null,
       player: playerEl.value.trim() || null,
       gameMode: gameModeEl.value || null,
+      position: overlayPositionEl.value || 'bottom-left',
+      hidden: overlayHiddenEl.checked,
     });
 
     if (new Blob([content]).size > 5000) {

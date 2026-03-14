@@ -86,3 +86,18 @@ button:active { background: #5c16c5; }
 
 .status.ok    { color: #4ade80; }
 .status.error { color: #f87171; }
+
+.field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-inline input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #9147ff;
+  flex-shrink: 0;
+}
+
+.field-inline label { margin: 0; }
