@@ -215,14 +215,20 @@ body {
 .hero-portrait {
   width: 44px;
   height: 44px;
-  border-radius: 5px;
+  border-radius: 50%;
   object-fit: cover;
-  border: 2px solid rgba(255,255,255,0.1);
+  border: 2px solid rgba(255,255,255,0.12);
   background: #1a1a2e;
   flex-shrink: 0;
 }
-.hero-portrait.win-border  { border-color: rgba(74, 222, 128, 0.45); }
-.hero-portrait.loss-border { border-color: rgba(248, 113, 113, 0.3); }
+.hero-portrait.win-border {
+  border-color: #4ade80;
+  box-shadow: 0 0 8px rgba(74, 222, 128, 0.5);
+}
+.hero-portrait.loss-border {
+  border-color: rgba(248, 113, 113, 0.45);
+  box-shadow: 0 0 6px rgba(248, 113, 113, 0.35);
+}
 
 .player-info {
   display: flex;
@@ -290,17 +296,17 @@ body {
 }
 
 .ban-wrap::after {
-  content: '\D7';
+  content: '';
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-  font-weight: 900;
-  color: #f87171;
+  background: linear-gradient(
+    135deg,
+    transparent 38%,
+    rgba(239, 68, 68, 0.88) 38%,
+    rgba(239, 68, 68, 0.88) 62%,
+    transparent 62%
+  );
   pointer-events: none;
-  text-shadow: 0 0 3px rgba(0,0,0,0.9);
 }
 
 /* ── Talent builds ──────────────────────────────────────── */
@@ -474,6 +480,20 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0;
+  position: relative;
+}
+
+/* Vertical spine line — left: tl-time(38px) + gap(12px) + dot-half(6px) = 56px */
+.timeline-list::before {
+  content: '';
+  position: absolute;
+  left: 56px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  z-index: 0;
 }
 
 .timeline-empty {
@@ -503,15 +523,27 @@ body {
 }
 
 .tl-bar {
-  width: 3px;
-  align-self: stretch;
-  border-radius: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
   flex-shrink: 0;
-  min-height: 28px;
+  align-self: center;
+  border: 2px solid #0e0e10;
+  position: relative;
+  z-index: 1;
+  background: #52525b; /* default grey */
 }
-.tl-bar.team-0 { background: #3b82f6; }
-.tl-bar.team-1 { background: #ef4444; }
-.tl-bar.team-none { background: #52525b; }
+
+/* Kill events — team-0 killed = green, team-1 killed = red */
+.timeline-event.kill .tl-bar.team-0  { background: #4ade80; }
+.timeline-event.kill .tl-bar.team-1  { background: #f87171; }
+.timeline-event.kill .tl-bar.team-none { background: #6b7280; }
+
+/* Structure destroyed — grey */
+.timeline-event.structure .tl-bar { background: #6b7280; }
+
+/* Objective captured — gold */
+.timeline-event.objective .tl-bar { background: #fbbf24; }
 
 .tl-body {
   display: flex;

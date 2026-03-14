@@ -257,7 +257,11 @@
     }
 
     for (const ev of events) {
-      const row = el('div', 'timeline-event');
+      const typeClass =
+        ev.type === 'kill'           ? 'kill'      :
+        ev.type === 'fort_destroyed' ? 'structure'  :
+        ev.type === 'objective'      ? 'objective'  : '';
+      const row = el('div', typeClass ? `timeline-event ${typeClass}` : 'timeline-event');
 
       row.appendChild(el('span', 'tl-time', formatDuration(ev.time)));
 
