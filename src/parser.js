@@ -62,6 +62,7 @@ function parseReplay(filePath) {
       win: player.win ? 1 : 0,
       duration,
       playerName: player.name,
+      teamIndex: player.team != null ? player.team - 1 : null,
     });
   }
 
@@ -75,7 +76,13 @@ function parseReplay(filePath) {
   const fingerprintSource = `${gameDate}|${map}|${duration}|${sortedToons}`;
   const gameFingerprint = crypto.createHash('sha256').update(fingerprintSource).digest('hex');
 
-  return { players, gameFingerprint };
+  const teams = [0, 1].map(teamIndex => {
+    const teamPlayers = players.filter(p => p.teamIndex === teamIndex);
+    const win = teamPlayers.some(p => p.win === 1);
+    return { teamIndex, win, players: teamPlayers };
+  });
+
+  return { players, teams, gameFingerprint };
 }
 
 function yieldToEventLoop() {
