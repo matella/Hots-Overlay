@@ -281,6 +281,61 @@
     }
   }
 
+  // ── Replay section (upload / download) ──────────────────────────────
+
+  function renderReplaySection(match) {
+    const container = document.getElementById('section-replay');
+
+    if (match.hasReplay) {
+      const a = el('a', 'btn btn-download', 'Download Replay');
+      a.href = `/api/matches/${encodeURIComponent(match.id)}/replay`;
+      if (match.filename) a.download = match.filename;
+      container.appendChild(a);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.StormReplay';
+      input.style.display = 'none';
+
+      const btn = el('button', 'btn btn-upload', 'Upload Replay');
+      const statusEl = el('div', 'replay-upload-status');
+
+      btn.addEventListener('click', () => input.click());
+      input.addEventListener('change', () => {
+        const file = input.files && input.files[0];
+        if (file) uploadReplay(file, btn, statusEl);
+      });
+
+      container.appendChild(input);
+      container.appendChild(btn);
+      container.appendChild(statusEl);
+    }
+  }
+
+  async function uploadReplay(file, btn, statusEl) {
+    statusEl.textContent = 'Uploading\u2026';
+    statusEl.className = 'replay-upload-status uploading';
+    btn.disabled = true;
+
+    const formData = new FormData();
+    formData.append('replay', file);
+
+    try {
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const body = await res.json();
+      if (!res.ok && body.status !== 'duplicate') {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      statusEl.textContent = 'Upload successful \u2014 reloading\u2026';
+      statusEl.className = 'replay-upload-status success';
+      setTimeout(() => location.reload(), 800);
+    } catch (err) {
+      statusEl.textContent = err.message;
+      statusEl.className = 'replay-upload-status error';
+      btn.disabled = false;
+    }
+  }
+
   // ── Init ─────────────────────────────────────────────────────────────
 
   async function init() {
@@ -303,6 +358,7 @@
       document.title = `${match.map || 'Match'} — HotS Overlay`;
 
       renderHeader(match);
+      renderReplaySection(match);
 
       const teams = (match.teams || []).slice().sort((a, b) => a.teamIndex - b.teamIndex);
       for (const team of teams) renderTeamColumn(team);

@@ -285,6 +285,74 @@
         }
       }
     },
+    "/matches/{id}": {
+      "get": {
+        "summary": "Match detail",
+        "description": "Returns full match data for a single match by MongoDB ObjectId, including `hasReplay` indicating whether the .StormReplay file is available on this server.",
+        "tags": ["Matches"],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "MongoDB ObjectId of the match"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Match detail with replay availability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/Match" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "filename": { "type": "string", "nullable": true },
+                        "hasReplay": { "type": "boolean", "description": "True if the .StormReplay file is present on this server" },
+                        "mapImage": { "type": "string", "format": "uri" },
+                        "events": { "type": "array", "items": { "type": "object" } }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": { "description": "Match not found" }
+        }
+      }
+    },
+    "/matches/{id}/replay": {
+      "get": {
+        "summary": "Download replay file",
+        "description": "Streams the .StormReplay file for the given match as an attachment download. Returns 404 if the file is not available on this server.",
+        "tags": ["Matches"],
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "MongoDB ObjectId of the match"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ".StormReplay binary file",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          },
+          "404": { "description": "Replay file not available on this server" }
+        }
+      }
+    },
     "/upload": {
       "post": {
         "summary": "Upload replay (multipart)",

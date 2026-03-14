@@ -352,7 +352,7 @@ router.get('/matches/:id', async (req, res) => {
     mapImage: getMapImageUrl(match.map),
     gameMode: match.gameMode,
     duration: match.duration,
-    hasReplay: Boolean(match.replayPath),
+    hasReplay: !!(match.replayPath && fs.existsSync(match.replayPath)),
     teams,
     events: match.events || [],
   });

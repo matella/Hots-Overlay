@@ -558,6 +558,49 @@ body {
   flex-direction: column;
 }
 
+/* ── Replay action ──────────────────────────────────────── */
+
+#section-replay {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.btn-upload {
+  background: #3b82f6;
+  color: #fff;
+}
+.btn-upload:hover:not(:disabled) { background: #2563eb; }
+.btn-upload:disabled { opacity: 0.6; cursor: default; }
+
+.btn-download {
+  background: #22c55e;
+  color: #fff;
+}
+.btn-download:hover { background: #16a34a; }
+
+.replay-upload-status {
+  font-size: 13px;
+}
+.replay-upload-status.uploading { color: #adadb8; }
+.replay-upload-status.success   { color: #4ade80; }
+.replay-upload-status.error     { color: #f87171; }
+
 /* ── Responsive ─────────────────────────────────────────── */
 
 @media (max-width: 700px) {
