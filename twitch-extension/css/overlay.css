@@ -162,3 +162,14 @@ html, body {
     --gap:         clamp(5px, 0.3vw, 9px);
   }
 }
+
+/* ─── Not-streaming state ─────────────────────────────────────── */
+#portrait-overlay.not-streaming #stats-bar { opacity: 0.4; }
+
+#portrait-overlay.not-streaming #portrait-row::after {
+  content: 'Not streaming';
+  color: rgba(255, 255, 255, 0.35);
+  font-size: calc(var(--font-size) * 0.9);
+  font-weight: 400;
+  padding: 0 2px;
+}

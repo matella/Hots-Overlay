@@ -76,24 +76,6 @@ function onNewReplay(filePath) {
     });
   }
 
-  if (config.twitch.broadcasterId && config.twitch.clientId && config.toonHandle) {
-    const todayGames = db.getTodayGames([config.toonHandle], config.gameMode);
-    const stats = db.computeStats(todayGames);
-    ebs.sendPubSubMessage(config.twitch.broadcasterId, {
-      type: 'session_stats',
-      session: {
-        wins: stats.wins,
-        losses: stats.losses,
-        winRate: stats.winRate,
-        heroes: todayGames.map(g => ({
-          hero: g.hero,
-          heroShort: g.hero_short,
-          heroImage: getHeroImageUrl(g.hero),
-          win: Boolean(g.win),
-        })),
-      },
-    }).catch(err => console.error('[ebs] PubSub failed:', err.message));
-  }
 }
 
 routes.init(broadcast);
@@ -128,4 +110,13 @@ server.listen(config.port, async () => {
 
   startWatcher(config.replayDir, onNewReplay);
   console.log('Watching for new replays...');
+
+  if (config.twitch.broadcasterId && config.twitch.clientId && config.toonHandle) {
+    ebs.startDataFetcher(
+      `http://localhost:${config.port}`,
+      config.twitch.broadcasterId,
+      config.toonHandle,
+      config.gameMode,
+    );
+  }
 });

@@ -164,4 +164,102 @@ function sendPubSubMessage(channelId, messageObj) {
   });
 }
 
-module.exports = { verifyExtensionJWT, createEBSJWT, sendPubSubMessage };
+// ─── Data fetcher ─────────────────────────────────────────────────────────────
+//
+// startDataFetcher connects the EBS to the HotS Overlay server:
+//   1. On startup: fetches GET /api/today and broadcasts initial session stats
+//   2. Subscribes to the server's WebSocket for real-time new_game events
+//   3. On each new_game: re-fetches /api/today and re-broadcasts PubSub
+//   4. Reconnects WebSocket on disconnect with exponential backoff
+
+function _fetchTodayStats(baseUrl, toonHandle, gameMode) {
+  return new Promise((resolve, reject) => {
+    const params = new URLSearchParams();
+    if (toonHandle) params.set('player', toonHandle);
+    if (gameMode)   params.set('mode', gameMode);
+    const qs = params.toString();
+    const url = `${baseUrl}/api/today${qs ? '?' + qs : ''}`;
+    const mod = url.startsWith('https') ? require('https') : require('http');
+    const req = mod.get(url, res => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(data)); } catch (e) { reject(e); }
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}`));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(5000, () => { req.destroy(new Error('timeout')); });
+  });
+}
+
+function _buildPubSubPayload(apiResponse) {
+  const { games = [], stats = {} } = apiResponse;
+  return {
+    type: 'session_stats',
+    session: {
+      wins:    stats.wins    ?? 0,
+      losses:  stats.losses  ?? 0,
+      winRate: stats.winRate ?? 0,
+      // games is already most-recent-first (ORDER BY game_date DESC)
+      heroes: games.map(g => ({
+        hero:      g.hero,
+        heroShort: g.heroShort,
+        heroImage: g.heroImage,
+        win:       Boolean(g.win),
+      })),
+    },
+  };
+}
+
+function _fetchAndBroadcast(baseUrl, channelId, toonHandle, gameMode) {
+  _fetchTodayStats(baseUrl, toonHandle, gameMode)
+    .then(data => sendPubSubMessage(channelId, _buildPubSubPayload(data)))
+    .catch(err => console.error('[ebs] fetch/broadcast failed:', err.message));
+}
+
+const _WS_BACKOFF = [2000, 5000, 15000, 30000];
+
+// Start fetching game data from the HotS Overlay server and forwarding to Twitch PubSub.
+// Call this once after the HTTP server is listening (so /api/today and the WebSocket are ready).
+function startDataFetcher(baseUrl, channelId, toonHandle, gameMode) {
+  console.log(`[ebs] startDataFetcher baseUrl=${baseUrl} channel=${channelId}`);
+  _fetchAndBroadcast(baseUrl, channelId, toonHandle, gameMode);
+
+  let attempt = 0;
+  function connect() {
+    const WebSocket = require('ws');
+    const wsUrl = baseUrl.replace(/^http/, 'ws');
+    const ws = new WebSocket(wsUrl);
+
+    ws.on('open', () => {
+      console.log('[ebs] WebSocket connected to overlay server');
+      attempt = 0;
+    });
+
+    ws.on('message', raw => {
+      try {
+        const msg = JSON.parse(raw);
+        if (msg.type === 'new_game') {
+          console.log('[ebs] new_game event — re-fetching /api/today');
+          _fetchAndBroadcast(baseUrl, channelId, toonHandle, gameMode);
+        }
+      } catch {}
+    });
+
+    ws.on('close', () => {
+      const delay = _WS_BACKOFF[Math.min(attempt++, _WS_BACKOFF.length - 1)];
+      console.warn(`[ebs] WS closed, reconnecting in ${delay}ms`);
+      setTimeout(connect, delay);
+    });
+
+    ws.on('error', err => console.error('[ebs] WS error:', err.message));
+  }
+
+  connect();
+}
+
+module.exports = { verifyExtensionJWT, createEBSJWT, sendPubSubMessage, startDataFetcher };
