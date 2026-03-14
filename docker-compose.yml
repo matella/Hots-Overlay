@@ -1,6 +1,6 @@
 services:
   mongo:
-    image: mongo:7
+    image: mongo:8
     volumes:
       - ./data/mongo:/data/db
     healthcheck:
@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
 
   mongo-express:
-    image: mongo-express
+    image: mongo-express:1.0.2
     ports:
       - "8081:8081"
     environment:
