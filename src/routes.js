@@ -196,6 +196,67 @@ router.get('/players', (_req, res) => {
   res.json({ players: db.getAvailablePlayers(), default: config.toonHandle });
 });
 
+router.get('/matches', async (req, res) => {
+  const page  = Math.max(1, parseInt(req.query.page,  10) || 1);
+  const limit = Math.min(Math.max(1, parseInt(req.query.limit, 10) || 20), 100);
+  const skip  = (page - 1) * limit;
+
+  const filter = {};
+
+  // Player filter — resolve name → toonHandle using existing db helper
+  if (req.query.player && req.query.player.toLowerCase() !== 'all') {
+    const toons = req.query.player.split(',')
+      .map(p => { const t = db.resolveToonHandle(p.trim()); return t || p.trim(); })
+      .filter(Boolean);
+    if (toons.length) filter['teams.players.toonHandle'] = { $in: toons };
+  }
+
+  // Mode filter
+  if (req.query.mode && req.query.mode.toLowerCase() !== 'all') {
+    filter.gameMode = req.query.mode;
+  }
+
+  // Date range filter (ISO strings or YYYY-MM-DD)
+  if (req.query.from || req.query.to) {
+    filter.gameDate = {};
+    if (req.query.from) filter.gameDate.$gte = new Date(req.query.from);
+    if (req.query.to)   filter.gameDate.$lte = new Date(req.query.to);
+  }
+
+  try {
+    const [total, docs] = await Promise.all([
+      Match.countDocuments(filter),
+      Match.find(filter).sort({ gameDate: -1 }).skip(skip).limit(limit).lean(),
+    ]);
+
+    const matches = docs.map(doc => ({
+      id:          doc._id,
+      fingerprint: doc.fingerprint,
+      gameDate:    doc.gameDate,
+      map:         doc.map,
+      gameMode:    doc.gameMode,
+      duration:    doc.duration,
+      teams: (doc.teams || []).map(team => ({
+        teamIndex: team.teamIndex,
+        win:       team.win,
+        bans:      team.bans || [],
+        players:   (team.players || []).map(p => ({
+          toonHandle: p.toonHandle,
+          playerName: p.playerName,
+          hero:       p.hero,
+          heroShort:  p.heroShort,
+          heroImage:  getHeroImageUrl(p.hero),
+        })),
+      })),
+    }));
+
+    res.json({ matches, total, page, pages: Math.ceil(total / limit), limit });
+  } catch (err) {
+    console.error('[matches] query failed:', err.message);
+    res.status(500).json({ error: 'Failed to query matches' });
+  }
+});
+
 // Validate filename to prevent path traversal
 function isValidFilename(filename) {
   return /^[a-zA-Z0-9 ._\-()]+\.StormReplay$/.test(filename) && !filename.includes('..');
