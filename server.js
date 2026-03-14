@@ -90,6 +90,35 @@ function onNewReplay(filePath) {
     });
   }
 
+  // Notify the in-process EBS directly (replaces the old WebSocket self-loop).
+  if (config.twitch.broadcasterId && config.twitch.clientId && config.toonHandle) {
+    ebs.notifyNewGame(
+      `http://localhost:${config.port}`,
+      config.twitch.broadcasterId,
+      config.toonHandle,
+      config.gameMode,
+    );
+  }
+
+  // Forward a new_game event to an external EBS if EBS_URL is configured.
+  if (config.ebsUrl) {
+    ebs.webhookPost(config.ebsUrl, {
+      type: 'new_game',
+      games: result.players.map(p => ({
+        toonHandle: p.toonHandle,
+        playerName: p.playerName,
+        gameDate: p.gameDate,
+        map: p.map,
+        gameMode: p.gameMode,
+        hero: p.hero,
+        heroShort: p.heroShort,
+        heroImage: getHeroImageUrl(p.hero),
+        win: Boolean(p.win),
+        duration: p.duration,
+      })),
+    }).catch(err => console.error('[server] EBS webhook POST failed:', err.message));
+  }
+
 }
 
 routes.init(broadcast);

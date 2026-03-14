@@ -15,6 +15,7 @@ const config = Object.freeze({
   dbPath: path.resolve(process.env.DB_PATH || './data/overlay.db'),
   gameMode: process.env.GAME_MODE || 'Storm League',
   authToken: process.env.AUTH_TOKEN || null,
+  ebsUrl: process.env.EBS_URL || null,
   modeLabels,
   httpsPort: parseInt(process.env.HTTPS_PORT, 10) || null,
   sslKeyPath: process.env.SSL_KEY_PATH || null,
