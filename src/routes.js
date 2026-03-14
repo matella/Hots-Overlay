@@ -15,15 +15,16 @@ const router = express.Router();
 let broadcast = () => {};
 function init(broadcastFn) { broadcast = broadcastFn; }
 
-// --- Extension JWT middleware (optional — verifies Twitch viewer identity if header present) ---
-function optionalExtJwt(req, res, next) {
-  const token = req.headers['x-extension-jwt'];
-  if (token && config.twitch && config.twitch.extensionSecret) {
-    try {
-      req.twitchAuth = verifyExtensionJWT(token);
-    } catch (e) {
-      return res.status(401).json({ error: 'Invalid extension JWT' });
-    }
+// --- Extension JWT middleware (required — verifies Twitch viewer identity via Authorization header) ---
+function requireExtJwt(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: 'Missing Authorization header' });
+  try {
+    const decoded = verifyExtensionJWT(token);
+    req.twitchAuth = { channel_id: decoded.channel_id, user_id: decoded.user_id, role: decoded.role };
+  } catch (e) {
+    return res.status(401).json({ error: 'Invalid extension JWT' });
   }
   next();
 }
@@ -130,7 +131,7 @@ router.get('/recent', (req, res) => {
 // Returns recent games grouped with all 10 heroes (both teams) per game.
 // Used by the Twitch Extension video overlay sidebar.
 // Requires a single player to determine "my team" vs "their team".
-router.get('/recent-full', optionalExtJwt, (req, res) => {
+router.get('/recent-full', requireExtJwt, (req, res) => {
   const players = resolvePlayer(req.query);
   if (!players || players.length !== 1) {
     return res.status(400).json({ error: 'Exactly one player required. Use ?player= or set TOON_HANDLE.' });
