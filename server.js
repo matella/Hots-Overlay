@@ -69,7 +69,7 @@ function broadcast(data) {
   }
 }
 
-function onNewReplay(filePath) {
+async function onNewReplay(filePath) {
   const filename = path.basename(filePath);
   if (db.isFileProcessed(filename)) return;
 
@@ -85,29 +85,70 @@ function onNewReplay(filePath) {
   db.markFileProcessed(filename);
 
   if (result.matchDoc) {
-    Match.findOneAndUpdate(
-      { fingerprint: result.gameFingerprint },
-      { $setOnInsert: result.matchDoc },
-      { upsert: true }
-    ).catch(err => console.error(`[server] MongoDB upsert failed for ${filename}: ${err.message}`));
-  }
-
-  for (const p of result.players) {
-    broadcast({
-      type: 'new_game',
-      game: {
-        toonHandle: p.toonHandle,
-        playerName: p.playerName,
-        gameDate: p.gameDate,
-        map: p.map,
-        gameMode: p.gameMode,
-        hero: p.hero,
-        heroShort: p.heroShort,
-        heroImage: getHeroImageUrl(p.hero),
-        win: Boolean(p.win),
-        duration: p.duration,
-      },
-    });
+    try {
+      const savedDoc = await Match.findOneAndUpdate(
+        { fingerprint: result.gameFingerprint },
+        { $setOnInsert: result.matchDoc },
+        { upsert: true, new: true }
+      );
+      for (const team of savedDoc.teams) {
+        for (const player of team.players) {
+          broadcast({
+            type: 'new_game',
+            game: {
+              id: savedDoc._id.toString(),
+              toonHandle: player.toonHandle,
+              playerName: player.playerName,
+              gameDate: savedDoc.gameDate,
+              map: savedDoc.map,
+              gameMode: savedDoc.gameMode,
+              hero: player.hero,
+              heroShort: player.heroShort,
+              heroImage: getHeroImageUrl(player.hero),
+              win: Boolean(team.win),
+              duration: savedDoc.duration,
+            },
+          });
+        }
+      }
+    } catch (err) {
+      console.error(`[server] MongoDB upsert failed for ${filename}: ${err.message}`);
+      for (const p of result.players) {
+        broadcast({
+          type: 'new_game',
+          game: {
+            toonHandle: p.toonHandle,
+            playerName: p.playerName,
+            gameDate: p.gameDate,
+            map: p.map,
+            gameMode: p.gameMode,
+            hero: p.hero,
+            heroShort: p.heroShort,
+            heroImage: getHeroImageUrl(p.hero),
+            win: Boolean(p.win),
+            duration: p.duration,
+          },
+        });
+      }
+    }
+  } else {
+    for (const p of result.players) {
+      broadcast({
+        type: 'new_game',
+        game: {
+          toonHandle: p.toonHandle,
+          playerName: p.playerName,
+          gameDate: p.gameDate,
+          map: p.map,
+          gameMode: p.gameMode,
+          hero: p.hero,
+          heroShort: p.heroShort,
+          heroImage: getHeroImageUrl(p.hero),
+          win: Boolean(p.win),
+          duration: p.duration,
+        },
+      });
+    }
   }
 
   // Notify the in-process EBS directly (replaces the old WebSocket self-loop).
