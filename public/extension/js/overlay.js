@@ -7,6 +7,7 @@
   let authToken = null;
   let player = null;
   let gameMode = null;
+  let twitchJwt = null;
 
   // ─── Render helpers ──────────────────────────────────────────────
 
@@ -72,6 +73,7 @@
     if (gameMode) params.set('mode', gameMode);
 
     const headers = {};
+    if (twitchJwt) headers['X-Extension-JWT'] = twitchJwt;
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
     try {
@@ -105,7 +107,8 @@
 
   // ─── Twitch Extension lifecycle ──────────────────────────────────
 
-  window.Twitch.ext.onAuthorized(() => {
+  window.Twitch.ext.onAuthorized((auth) => {
+    twitchJwt = auth.token;
     // Read broadcaster configuration saved via config.html
     const cfg = window.Twitch.ext.configuration.broadcaster;
     if (cfg && cfg.content) {
@@ -124,11 +127,9 @@
   });
 
   window.Twitch.ext.onContext(ctx => {
-    // Pause/resume rendering when viewer switches themes or the stream goes offline
-    if (ctx.isFullScreen) {
-      document.getElementById('sidebar').style.display = 'none';
-    } else {
-      document.getElementById('sidebar').style.display = '';
-    }
+    if (ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+    if (ctx.language) document.documentElement.lang = ctx.language;
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar) sidebar.style.display = ctx.isFullScreen ? 'none' : '';
   });
 })();
