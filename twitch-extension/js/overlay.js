@@ -1,73 +1,78 @@
 (function () {
   'use strict';
 
-  const gameList = document.getElementById('game-list');
+  const MAX_TILES = 10;
 
   let ebsUrl = null;
   let authToken = null;
   let player = null;
   let gameMode = null;
+  let modeLabels = {};
+  let resolvedHandles = null; // array of toon handles for the tracked player
 
-  // ─── Render helpers ──────────────────────────────────────────────
+  // ─── DOM helpers ─────────────────────────────────────────────────
 
-  function makeHeroIcon(hero, isMe) {
-    const wrap = document.createElement('div');
-    wrap.className = 'hero-icon' + (isMe ? ' is-me' : '');
+  function getModeLabel(mode) {
+    return modeLabels[mode] || mode || '';
+  }
+
+  function updateStats(stats) {
+    const { wins, losses, winRate } = stats;
+    document.getElementById('win-count').textContent  = `${wins}W`;
+    document.getElementById('loss-count').textContent = `${losses}L`;
+    document.getElementById('win-rate').textContent   = `${winRate.toFixed(1)}%`;
+  }
+
+  function updateModeLabel() {
+    const label = getModeLabel(gameMode) || 'All Modes';
+    document.getElementById('mode-label').textContent = label;
+  }
+
+  // ─── Tile rendering ───────────────────────────────────────────────
+
+  function createTile(game, animate) {
+    const tile = document.createElement('div');
+    tile.className = 'portrait-tile ' + (game.win ? 'win' : 'loss');
 
     const img = document.createElement('img');
-    img.src = hero.heroImage;
-    img.alt = hero.hero;
-    img.loading = 'lazy';
+    img.src = game.heroImage || '';
+    img.alt = game.hero || '';
+    img.title = `${game.hero} – ${game.map || ''} (${getModeLabel(game.gameMode)})`;
     img.onerror = () => { img.style.opacity = '0.3'; };
+    tile.appendChild(img);
 
-    const tip = document.createElement('span');
-    tip.className = 'tooltip';
-    tip.textContent = hero.playerName || hero.hero;
-
-    wrap.appendChild(img);
-    wrap.appendChild(tip);
-    return wrap;
-  }
-
-  function makeHeroRow(heroes, className) {
-    const row = document.createElement('div');
-    row.className = 'hero-row ' + className;
-    for (const hero of heroes) {
-      row.appendChild(makeHeroIcon(hero, hero.isMe));
-    }
-    return row;
-  }
-
-  function renderGame(game) {
-    const card = document.createElement('div');
-    card.className = 'game-card';
-    if (game.mapImage) {
-      card.style.setProperty('--map-img', `url(${game.mapImage})`);
+    if (animate) {
+      tile.classList.add('entering');
+      // Remove animation class after it completes so re-insertion works
+      tile.addEventListener('animationend', () => tile.classList.remove('entering'), { once: true });
     }
 
-    const badge = document.createElement('div');
-    badge.className = 'result-badge ' + (game.result === 'win' ? 'win' : 'loss');
-    badge.textContent = game.result === 'win' ? 'Victory' : 'Defeat';
-
-    card.appendChild(makeHeroRow(game.myTeam, 'my-team'));
-    card.appendChild(badge);
-    card.appendChild(makeHeroRow(game.theirTeam, 'their-team'));
-    return card;
+    return tile;
   }
 
-  function renderGames(games) {
-    gameList.innerHTML = '';
-    for (const game of games) {
-      gameList.appendChild(renderGame(game));
+  function renderPortraits(games) {
+    const row = document.getElementById('portrait-row');
+    row.innerHTML = '';
+    const visible = games.slice(0, MAX_TILES);
+    for (const game of visible) {
+      row.appendChild(createTile(game, false));
     }
   }
 
-  // ─── Data fetching ───────────────────────────────────────────────
+  function addPortrait(game) {
+    const row = document.getElementById('portrait-row');
+    row.insertBefore(createTile(game, true), row.firstChild);
+    while (row.children.length > MAX_TILES) {
+      row.removeChild(row.lastChild);
+    }
+  }
+
+  // ─── Data fetching ────────────────────────────────────────────────
 
   async function fetchGames() {
     if (!ebsUrl) return;
 
-    const params = new URLSearchParams({ limit: 10 });
+    const params = new URLSearchParams({ limit: MAX_TILES });
     if (player) params.set('player', player);
     if (gameMode) params.set('mode', gameMode);
 
@@ -75,60 +80,102 @@
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
     try {
-      const res = await fetch(`${ebsUrl}/api/recent-full?${params}`, { headers });
+      const res = await fetch(`${ebsUrl}/api/recent?${params}`, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      renderGames(data.games || []);
+
+      resolvedHandles = Array.isArray(data.player) ? data.player : (data.player ? [data.player] : null);
+
+      renderPortraits(data.games || []);
+      updateStats(data.stats || { wins: 0, losses: 0, winRate: 0 });
+
+      // Use mode from response if available, otherwise keep config value
+      if (!gameMode && data.mode) {
+        gameMode = data.mode;
+        updateModeLabel();
+      }
     } catch (err) {
       console.error('[HotS Overlay] fetch failed:', err.message);
     }
   }
 
-  // ─── PubSub handler ──────────────────────────────────────────────
+  async function refreshStats() {
+    if (!ebsUrl) return;
+
+    const params = new URLSearchParams({ limit: MAX_TILES });
+    if (player) params.set('player', player);
+    if (gameMode) params.set('mode', gameMode);
+
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+
+    try {
+      const res = await fetch(`${ebsUrl}/api/recent?${params}`, { headers });
+      if (!res.ok) return;
+      const data = await res.json();
+      updateStats(data.stats || { wins: 0, losses: 0, winRate: 0 });
+    } catch {
+      // non-critical — silently ignore
+    }
+  }
+
+  // ─── PubSub handler ───────────────────────────────────────────────
 
   function onPubSubMessage(_target, _contentType, rawMessage) {
     try {
       const msg = JSON.parse(rawMessage);
-      if (msg.type === 'new_game' && msg.game) {
-        // Prepend the new game card at the top
-        const card = renderGame(msg.game);
-        gameList.insertBefore(card, gameList.firstChild);
-        // Keep at most 10 entries
-        while (gameList.children.length > 10) {
-          gameList.removeChild(gameList.lastChild);
-        }
-      }
+      if (msg.type !== 'new_game' || !msg.game) return;
+
+      const game = msg.game;
+
+      // Filter by tracked player if resolved
+      if (resolvedHandles && !resolvedHandles.includes(game.toonHandle)) return;
+
+      // Filter by game mode if configured
+      if (gameMode && game.gameMode !== gameMode) return;
+
+      addPortrait(game);
+      refreshStats();
     } catch (err) {
       console.error('[HotS Overlay] PubSub parse error:', err.message);
     }
   }
 
-  // ─── Twitch Extension lifecycle ──────────────────────────────────
+  // ─── Twitch Extension lifecycle ───────────────────────────────────
 
-  window.Twitch.ext.onAuthorized(() => {
+  window.Twitch.ext.onAuthorized(async () => {
     // Read broadcaster configuration saved via config.html
     const cfg = window.Twitch.ext.configuration.broadcaster;
     if (cfg && cfg.content) {
       try {
         const saved = JSON.parse(cfg.content);
-        ebsUrl = saved.serverUrl || null;
-        authToken = saved.authToken || null;
-        player = saved.player || null;
-        gameMode = saved.gameMode || null;
+        ebsUrl     = saved.serverUrl  || null;
+        authToken  = saved.authToken  || null;
+        player     = saved.player     || null;
+        gameMode   = saved.gameMode   || null;
       } catch {}
     }
 
+    // Fetch mode labels for display
+    if (ebsUrl) {
+      try {
+        const headers = authToken ? { Authorization: `Bearer ${authToken}` } : {};
+        const res = await fetch(`${ebsUrl}/api/modes`, { headers });
+        if (res.ok) {
+          const data = await res.json();
+          modeLabels = data.labels || {};
+        }
+      } catch {}
+    }
+
+    updateModeLabel();
     fetchGames();
 
     window.Twitch.ext.listen('broadcast', onPubSubMessage);
   });
 
   window.Twitch.ext.onContext(ctx => {
-    // Pause/resume rendering when viewer switches themes or the stream goes offline
-    if (ctx.isFullScreen) {
-      document.getElementById('sidebar').style.display = 'none';
-    } else {
-      document.getElementById('sidebar').style.display = '';
-    }
+    const overlay = document.getElementById('portrait-overlay');
+    if (overlay) overlay.style.display = ctx.isFullScreen ? 'none' : '';
   });
 })();
