@@ -121,10 +121,28 @@
 
   // ─── PubSub handler ───────────────────────────────────────────────
 
+  let resubAttempt = 0;
+  let resubTimer = null;
+  const RESUB_DELAYS = [2000, 5000, 15000, 30000]; // ms, caps at 30s
+
+  function scheduleResubscribe() {
+    if (resubTimer) return;
+    const delay = RESUB_DELAYS[Math.min(resubAttempt, RESUB_DELAYS.length - 1)];
+    resubAttempt++;
+    console.warn(`[HotS Overlay] Re-subscribing in ${delay}ms (attempt ${resubAttempt})`);
+    resubTimer = setTimeout(() => {
+      resubTimer = null;
+      window.Twitch.ext.unlisten('broadcast', onPubSubMessage);
+      window.Twitch.ext.listen('broadcast', onPubSubMessage);
+    }, delay);
+  }
+
   function onPubSubMessage(_target, _contentType, rawMessage) {
     try {
       const msg = JSON.parse(rawMessage);
       if (msg.type !== 'new_game' || !msg.game) return;
+
+      resubAttempt = 0; // successful message resets backoff
 
       const game = msg.game;
 
@@ -142,6 +160,11 @@
   }
 
   // ─── Twitch Extension lifecycle ───────────────────────────────────
+
+  window.Twitch.ext.onError(err => {
+    console.error('[HotS Overlay] Extension error:', err);
+    scheduleResubscribe();
+  });
 
   window.Twitch.ext.onAuthorized(async () => {
     // Read broadcaster configuration saved via config.html
