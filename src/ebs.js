@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const https = require('https');
+const jwt = require('jsonwebtoken');
 const config = require('./config');
 
 /**
@@ -52,29 +53,13 @@ const _queues = new Map();
 
 // Verify a JWT signed by the Twitch Extension Helper (HS256).
 // The extension secret from the Twitch Developer Console is base64-encoded.
-// Returns the decoded payload, or throws on failure.
+// Returns the decoded payload ({ channel_id, user_id, role, ... }), or throws on failure.
 function verifyExtensionJWT(token) {
   if (!config.twitch.extensionSecret) {
     throw new Error('TWITCH_EXTENSION_SECRET not configured');
   }
-  const parts = token.split('.');
-  if (parts.length !== 3) throw new Error('Malformed JWT');
-
-  const [header, payload, sig] = parts;
   const secret = Buffer.from(config.twitch.extensionSecret, 'base64');
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(`${header}.${payload}`)
-    .digest('base64url');
-
-  if (
-    sig.length !== expected.length ||
-    !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
-  ) {
-    throw new Error('JWT signature mismatch');
-  }
-
-  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+  return jwt.verify(token, secret, { algorithms: ['HS256'] });
 }
 
 // Create a short-lived JWT for the EBS to authenticate against Twitch's APIs.

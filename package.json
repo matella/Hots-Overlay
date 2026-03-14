@@ -13,6 +13,7 @@
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "hots-parser": "^7.55.7",
+    "jsonwebtoken": "9.0.3",
     "multer": "^2.1.1",
     "swagger-ui-express": "^5.0.1",
     "ws": "^8.19.0"
