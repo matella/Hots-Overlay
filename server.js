@@ -10,6 +10,7 @@ const config = require('./src/config');
 console.log(`[startup] Config loaded — port=${config.port}, replayDir=${config.replayDir}`);
 const db = require('./src/database');
 const mongo = require('./src/db/connection');
+const { Match } = require('./src/db/match.model');
 const { parseReplay, scanAndParseAll } = require('./src/parser');
 const { startWatcher } = require('./src/watcher');
 const { getHeroImageUrl } = require('./src/heroNames');
@@ -82,6 +83,14 @@ function onNewReplay(filePath) {
     db.insertReplay(playerData);
   }
   db.markFileProcessed(filename);
+
+  if (result.matchDoc) {
+    Match.findOneAndUpdate(
+      { fingerprint: result.gameFingerprint },
+      { $setOnInsert: result.matchDoc },
+      { upsert: true }
+    ).catch(err => console.error(`[server] MongoDB upsert failed for ${filename}: ${err.message}`));
+  }
 
   for (const p of result.players) {
     broadcast({

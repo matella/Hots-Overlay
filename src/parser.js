@@ -5,6 +5,7 @@ const Parser = require('hots-parser');
 const config = require('./config');
 const db = require('./database');
 const { normalizeHeroName } = require('./heroNames');
+const { Match } = require('./db/match.model');
 
 const MAP_OBJECTIVE_NAMES = {
   'Cursed Hollow': 'Tribute',
@@ -208,7 +209,31 @@ function parseReplay(filePath) {
 
   const events = extractEvents(result);
 
-  return { players, teams, gameFingerprint, events };
+  const toSchemaPlayer = (p) => ({
+    toonHandle: p.toonHandle,
+    playerName: p.playerName,
+    hero: p.hero,
+    heroShort: p.heroShort,
+    talents: p.talents,
+  });
+  const matchDoc = {
+    fingerprint: gameFingerprint,
+    filename,
+    replayPath: filePath,
+    gameDate: new Date(gameDate),
+    map,
+    gameMode,
+    duration,
+    teams: teams.map(t => ({
+      teamIndex: t.teamIndex,
+      win: t.win,
+      bans: t.bans,
+      players: t.players.map(toSchemaPlayer),
+    })),
+    events,
+  };
+
+  return { players, teams, gameFingerprint, events, matchDoc };
 }
 
 function yieldToEventLoop() {
@@ -260,6 +285,22 @@ async function scanAndParseAll(replayDir, onProgress) {
         db.markFileProcessed(file);
       }
     });
+
+    // Upsert Match documents to MongoDB for all parsed games in this batch
+    const mongoOps = [];
+    for (const { file, result } of parsed) {
+      if (result && result.matchDoc && result.gameFingerprint) {
+        mongoOps.push(
+          Match.findOneAndUpdate(
+            { fingerprint: result.gameFingerprint },
+            { $setOnInsert: result.matchDoc },
+            { upsert: true }
+          ).catch(err => console.error(`[parser] MongoDB upsert failed for ${file}: ${err.message}`))
+        );
+      }
+    }
+    if (mongoOps.length > 0) await Promise.all(mongoOps);
+
     await yieldToEventLoop();
   }
 
