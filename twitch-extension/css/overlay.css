@@ -9,14 +9,31 @@ html, body {
   font-family: 'Segoe UI', system-ui, sans-serif;
 }
 
+/* ─── Design tokens ──────────────────────────────────────────────── */
+:root {
+  /* Fluid tile: 32px @ ~853px, 48px @ 1280px (720p), 64px @ 1707px */
+  --tile-size:          clamp(32px, 3.75vw, 64px);
+  /* Fluid font: 10px @ 1000px, 13px @ 1300px, 15px @ 1500px */
+  --font-size:          clamp(10px, 1vw, 15px);
+  /* Horizontal margin from screen edge */
+  --edge-margin:        clamp(8px, 0.9vw, 20px);
+  /* HotS safe zones: bottom clears ability bar corners, top clears score bar */
+  --safe-bottom:        clamp(36px, 5.5vh, 80px);
+  --safe-top:           clamp(40px, 7.5vh, 90px);
+  /* Internal spacing */
+  --gap:                clamp(3px, 0.3vw, 6px);
+  --border-radius-tile: clamp(5px, 0.6vw, 8px);
+}
+
 /* ─── Portrait overlay strip ─────────────────────────────────────── */
 #portrait-overlay {
   position: fixed;
-  bottom: 12px;
-  left: 12px;
+  bottom: var(--safe-bottom);
+  left: var(--edge-margin);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--gap);
+  max-width: calc(100vw - 2 * var(--edge-margin));
   background: rgba(8, 8, 16, 0.78);
   border-radius: 10px;
   padding: 6px 10px;
@@ -25,17 +42,17 @@ html, body {
 }
 
 /* ─── Position variants ──────────────────────────────────────────── */
-#portrait-overlay.pos-bottom-left  { bottom: 12px; left: 12px;  top: auto;    right: auto;  }
-#portrait-overlay.pos-bottom-right { bottom: 12px; right: 12px; top: auto;    left: auto;   }
-#portrait-overlay.pos-top-left     { top: 12px;    left: 12px;  bottom: auto; right: auto;  }
-#portrait-overlay.pos-top-right    { top: 12px;    right: 12px; bottom: auto; left: auto;   }
+#portrait-overlay.pos-bottom-left  { bottom: var(--safe-bottom); left: var(--edge-margin);  top: auto;    right: auto; }
+#portrait-overlay.pos-bottom-right { bottom: var(--safe-bottom); right: var(--edge-margin); top: auto;    left: auto;  }
+#portrait-overlay.pos-top-left     { top: var(--safe-top);       left: var(--edge-margin);  bottom: auto; right: auto; }
+#portrait-overlay.pos-top-right    { top: var(--safe-top);       right: var(--edge-margin); bottom: auto; left: auto;  }
 
 /* ─── Stats bar ──────────────────────────────────────────────────── */
 #stats-bar {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 13px;
+  gap: var(--gap);
+  font-size: var(--font-size);
   font-weight: 600;
   color: #fff;
   white-space: nowrap;
@@ -50,16 +67,16 @@ html, body {
 /* ─── Portrait row ───────────────────────────────────────────────── */
 #portrait-row {
   display: flex;
-  gap: 4px;
+  gap: var(--gap);
   align-items: center;
-  min-height: 48px;
+  min-height: var(--tile-size);
 }
 
 /* Empty state */
 #portrait-row:empty::after {
   content: 'No games yet';
   color: rgba(255, 255, 255, 0.3);
-  font-size: 11px;
+  font-size: calc(var(--font-size) * 0.85);
   font-weight: 400;
   padding: 0 2px;
 }
@@ -67,9 +84,9 @@ html, body {
 /* ─── Portrait tile ──────────────────────────────────────────────── */
 .portrait-tile {
   position: relative;
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
+  width: var(--tile-size);
+  height: var(--tile-size);
+  border-radius: var(--border-radius-tile);
   overflow: hidden;
   border: 3px solid;
   flex-shrink: 0;
@@ -105,5 +122,43 @@ html, body {
   to {
     transform: translateX(0) scale(1);
     opacity: 1;
+  }
+}
+
+/* ─── Responsive breakpoints ─────────────────────────────────────── */
+
+/* ≤ 854px: small popout / 480p viewers */
+@media (max-width: 854px) {
+  :root {
+    --tile-size:   clamp(24px, 4.5vw, 32px);
+    --font-size:   clamp(9px, 1.1vw, 11px);
+    --edge-margin: clamp(6px, 0.8vw, 10px);
+    --safe-bottom: clamp(28px, 5vh, 44px);
+    --safe-top:    clamp(30px, 6vh, 48px);
+    --gap:         2px;
+  }
+}
+
+/* ≥ 1920px: 1080p+ */
+@media (min-width: 1920px) {
+  :root {
+    --tile-size:   clamp(56px, 3.5vw, 80px);
+    --font-size:   clamp(14px, 0.85vw, 18px);
+    --edge-margin: clamp(18px, 1.1vw, 28px);
+    --safe-bottom: clamp(60px, 5.5vh, 100px);
+    --safe-top:    clamp(64px, 7.5vh, 110px);
+    --gap:         clamp(4px, 0.35vw, 8px);
+  }
+}
+
+/* ≥ 2560px: 1440p+ */
+@media (min-width: 2560px) {
+  :root {
+    --tile-size:   clamp(72px, 3.5vw, 96px);
+    --font-size:   clamp(16px, 0.75vw, 20px);
+    --edge-margin: clamp(24px, 1.2vw, 36px);
+    --safe-bottom: clamp(80px, 5.5vh, 120px);
+    --safe-top:    clamp(88px, 7.5vh, 130px);
+    --gap:         clamp(5px, 0.3vw, 9px);
   }
 }
