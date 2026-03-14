@@ -29,6 +29,16 @@
     document.getElementById('mode-label').textContent = label;
   }
 
+  function showOffline() {
+    const overlay = document.getElementById('portrait-overlay');
+    if (overlay) overlay.classList.add('not-streaming');
+  }
+
+  function showOnline() {
+    const overlay = document.getElementById('portrait-overlay');
+    if (overlay) overlay.classList.remove('not-streaming');
+  }
+
   // ─── Tile rendering ───────────────────────────────────────────────
 
   function createTile(game, animate) {
@@ -81,7 +91,7 @@
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
     try {
-      const res = await fetch(`${ebsUrl}/api/recent?${params}`, { headers });
+      const res = await fetch(`${ebsUrl}/api/today?${params}`, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
@@ -95,8 +105,11 @@
         gameMode = data.mode;
         updateModeLabel();
       }
+
+      showOnline();
     } catch (err) {
       console.error('[HotS Overlay] fetch failed:', err.message);
+      showOffline();
     }
   }
 
@@ -111,13 +124,49 @@
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
     try {
-      const res = await fetch(`${ebsUrl}/api/recent?${params}`, { headers });
-      if (!res.ok) return;
+      const res = await fetch(`${ebsUrl}/api/today?${params}`, { headers });
+      if (!res.ok) { showOffline(); return; }
       const data = await res.json();
       updateStats(data.stats || { wins: 0, losses: 0, winRate: 0 });
+      showOnline();
     } catch {
-      // non-critical — silently ignore
+      showOffline();
     }
+  }
+
+  // ─── WebSocket connection ─────────────────────────────────────────
+
+  let wsAttempt = 0;
+  const WS_DELAYS = [2000, 5000, 15000, 30000];
+
+  function connectWebSocket() {
+    if (!ebsUrl) return;
+    const wsUrl = ebsUrl.replace(/^http/, 'ws');
+    let ws;
+    try { ws = new WebSocket(wsUrl); } catch { return; }
+
+    ws.addEventListener('open', () => {
+      console.log('[HotS Overlay] WebSocket connected to overlay server');
+      wsAttempt = 0;
+      showOnline();
+    });
+
+    ws.addEventListener('message', event => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'new_game') {
+          addPortrait(msg.game);
+          refreshStats();
+        }
+      } catch {}
+    });
+
+    ws.addEventListener('close', () => {
+      const delay = WS_DELAYS[Math.min(wsAttempt++, WS_DELAYS.length - 1)];
+      setTimeout(connectWebSocket, delay);
+    });
+
+    ws.addEventListener('error', () => { /* close fires next */ });
   }
 
   // ─── PubSub handler ───────────────────────────────────────────────
@@ -141,9 +190,16 @@
   function onPubSubMessage(_target, _contentType, rawMessage) {
     try {
       const msg = JSON.parse(rawMessage);
+
+      if (msg.type === 'not_streaming') {
+        showOffline();
+        return;
+      }
+
       if (msg.type !== 'session_stats' || !msg.session) return;
 
       resubAttempt = 0; // successful message resets backoff
+      showOnline();
 
       const { wins, losses, winRate, heroes } = msg.session;
       updateStats({ wins, losses, winRate });
@@ -199,6 +255,7 @@
 
     updateModeLabel();
     fetchGames();
+    connectWebSocket();
 
     window.Twitch.ext.listen('broadcast', onPubSubMessage);
   });
