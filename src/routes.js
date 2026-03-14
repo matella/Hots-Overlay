@@ -327,7 +327,7 @@ function cleanupTempFile(filePath, dest) {
   }
 }
 
-function processReplayFile(filename, filePath, res) {
+async function processReplayFile(filename, filePath, res) {
   const dest = path.join(config.replayDir, filename);
 
   if (db.replayExists(filename)) {
@@ -367,7 +367,12 @@ function processReplayFile(filename, filePath, res) {
     console.log(`[upload] ${filename}: duplicate game (fingerprint match)`);
     db.markFileProcessed(filename);
     try { fs.unlinkSync(dest); } catch {}
-    return res.status(409).json({ status: 'duplicate', filename, reason: 'game_fingerprint' });
+    let matchId = null;
+    try {
+      const existing = await Match.findOne({ fingerprint: parseResult.gameFingerprint }, '_id').lean();
+      matchId = existing?._id ?? null;
+    } catch {}
+    return res.status(409).json({ status: 'duplicate', filename, reason: 'game_fingerprint', matchId });
   }
 
   const parsedPlayers = parseResult.players;
@@ -387,14 +392,16 @@ function processReplayFile(filename, filePath, res) {
   }
 
   console.log(`[upload] ${filename}: parsed, ${insertedCount} players inserted`);
-  res.json({ status: 'ok', filename, parsed: true, players: insertedCount });
 
+  let matchId = null;
   if (parseResult.matchDoc) {
-    Match.findOneAndUpdate(
-      { fingerprint: parseResult.gameFingerprint },
-      { $setOnInsert: parseResult.matchDoc },
-      { upsert: true, new: true }
-    ).then(savedDoc => {
+    try {
+      const savedDoc = await Match.findOneAndUpdate(
+        { fingerprint: parseResult.gameFingerprint },
+        { $setOnInsert: parseResult.matchDoc },
+        { upsert: true, new: true }
+      );
+      matchId = savedDoc?._id ?? null;
       for (const team of savedDoc.teams) {
         for (const player of team.players) {
           broadcast({
@@ -415,7 +422,7 @@ function processReplayFile(filename, filePath, res) {
           });
         }
       }
-    }).catch(err => {
+    } catch (err) {
       console.error(`[upload] MongoDB upsert failed for ${filename}: ${err.message}`);
       for (const p of parsedPlayers) {
         broadcast({
@@ -434,7 +441,7 @@ function processReplayFile(filename, filePath, res) {
           },
         });
       }
-    });
+    }
   } else {
     for (const p of parsedPlayers) {
       broadcast({
@@ -454,10 +461,12 @@ function processReplayFile(filename, filePath, res) {
       });
     }
   }
+
+  res.json({ status: 'ok', matchId, gamesAdded: insertedCount, duplicate: false });
 }
 
 // Multipart upload (for curl / browser forms)
-router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
+router.post('/upload', checkAuth, upload.single('replay'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No .StormReplay file provided.' });
   }
@@ -465,12 +474,12 @@ router.post('/upload', checkAuth, upload.single('replay'), (req, res) => {
     try { fs.unlinkSync(req.file.path); } catch {}
     return res.status(400).json({ error: 'Invalid filename.' });
   }
-  processReplayFile(req.file.originalname, req.file.path, res);
+  await processReplayFile(req.file.originalname, req.file.path, res);
 });
 
 // Raw binary upload (for the Rust client)
 const rawUploadParser = express.raw({ type: '*/*', limit: '10mb' });
-router.post('/upload-raw', checkAuth, rawUploadParser, (req, res) => {
+router.post('/upload-raw', checkAuth, rawUploadParser, async (req, res) => {
   const rawFilename = req.headers['x-filename'];
   const filename = rawFilename ? decodeURIComponent(rawFilename) : null;
   if (!filename || !isValidFilename(filename)) {
@@ -513,7 +522,7 @@ router.post('/upload-raw', checkAuth, rawUploadParser, (req, res) => {
     return res.status(500).json({ error: `File write failed: ${err.message}` });
   }
 
-  processReplayFile(filename, tempPath, res);
+  await processReplayFile(filename, tempPath, res);
 });
 
 module.exports = router;
