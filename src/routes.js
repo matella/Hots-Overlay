@@ -266,34 +266,74 @@ function processReplayFile(filename, filePath, res) {
     db.storeGameFingerprint(parseResult.gameFingerprint, filename);
   }
 
+  console.log(`[upload] ${filename}: parsed, ${insertedCount} players inserted`);
+  res.json({ status: 'ok', filename, parsed: true, players: insertedCount });
+
   if (parseResult.matchDoc) {
     Match.findOneAndUpdate(
       { fingerprint: parseResult.gameFingerprint },
       { $setOnInsert: parseResult.matchDoc },
-      { upsert: true }
-    ).catch(err => console.error(`[upload] MongoDB upsert failed for ${filename}: ${err.message}`));
-  }
-
-  for (const p of parsedPlayers) {
-    broadcast({
-      type: 'new_game',
-      game: {
-        toonHandle: p.toonHandle,
-        playerName: p.playerName,
-        gameDate: p.gameDate,
-        map: p.map,
-        gameMode: p.gameMode,
-        hero: p.hero,
-        heroShort: p.heroShort,
-        heroImage: getHeroImageUrl(p.hero),
-        win: Boolean(p.win),
-        duration: p.duration,
-      },
+      { upsert: true, new: true }
+    ).then(savedDoc => {
+      for (const team of savedDoc.teams) {
+        for (const player of team.players) {
+          broadcast({
+            type: 'new_game',
+            game: {
+              id: savedDoc._id.toString(),
+              toonHandle: player.toonHandle,
+              playerName: player.playerName,
+              gameDate: savedDoc.gameDate,
+              map: savedDoc.map,
+              gameMode: savedDoc.gameMode,
+              hero: player.hero,
+              heroShort: player.heroShort,
+              heroImage: getHeroImageUrl(player.hero),
+              win: Boolean(team.win),
+              duration: savedDoc.duration,
+            },
+          });
+        }
+      }
+    }).catch(err => {
+      console.error(`[upload] MongoDB upsert failed for ${filename}: ${err.message}`);
+      for (const p of parsedPlayers) {
+        broadcast({
+          type: 'new_game',
+          game: {
+            toonHandle: p.toonHandle,
+            playerName: p.playerName,
+            gameDate: p.gameDate,
+            map: p.map,
+            gameMode: p.gameMode,
+            hero: p.hero,
+            heroShort: p.heroShort,
+            heroImage: getHeroImageUrl(p.hero),
+            win: Boolean(p.win),
+            duration: p.duration,
+          },
+        });
+      }
     });
+  } else {
+    for (const p of parsedPlayers) {
+      broadcast({
+        type: 'new_game',
+        game: {
+          toonHandle: p.toonHandle,
+          playerName: p.playerName,
+          gameDate: p.gameDate,
+          map: p.map,
+          gameMode: p.gameMode,
+          hero: p.hero,
+          heroShort: p.heroShort,
+          heroImage: getHeroImageUrl(p.hero),
+          win: Boolean(p.win),
+          duration: p.duration,
+        },
+      });
+    }
   }
-
-  console.log(`[upload] ${filename}: parsed, ${insertedCount} players inserted`);
-  res.json({ status: 'ok', filename, parsed: true, players: insertedCount });
 }
 
 // Multipart upload (for curl / browser forms)
