@@ -115,6 +115,11 @@ cp .env.example .env   # Edit with your TOON_HANDLE
 docker compose up -d
 ```
 
+Once running, the **Mongo Express** database UI is available at:
+```
+http://localhost:8081
+```
+
 ### Local (no Docker)
 
 ```bash
