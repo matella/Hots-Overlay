@@ -84,54 +84,37 @@
     }
   }
 
-  // ─── PubSub handler ──────────────────────────────────────────────
+  // ─── Session stats ───────────────────────────────────────────────
 
-  // Normalize the flat EBS broadcast format to the shape renderGame() expects.
-  // /api/recent-full returns full team arrays; the broadcast sends a flat record.
-  function normalizeGame(game) {
-    if (!Array.isArray(game.myTeam)) {
-      return {
-        mapImage: game.mapImage || null,
-        result: game.win ? 'win' : 'loss',
-        myTeam: [{
-          hero: game.hero,
-          heroImage: game.heroImage,
-          playerName: game.playerName,
-          isMe: true,
-        }],
-        theirTeam: [],
-      };
+  function renderSessionStats(session) {
+    let container = document.getElementById('session-stats');
+    if (!container) return;
+
+    const record = document.createElement('div');
+    record.className = 'session-record';
+    record.textContent = `${session.wins}W / ${session.losses}L`;
+
+    const heroes = document.createElement('div');
+    heroes.className = 'session-heroes';
+    for (const entry of session.heroes) {
+      heroes.appendChild(makeHeroIcon(
+        { hero: entry.hero, heroImage: entry.heroImage, playerName: entry.hero },
+        false,
+      ));
     }
-    return game;
+
+    container.innerHTML = '';
+    container.appendChild(record);
+    container.appendChild(heroes);
   }
 
-  let resubAttempt = 0;
-  let resubTimer = null;
-  const RESUB_DELAYS = [2000, 5000, 15000, 30000]; // ms, caps at 30s
-
-  function scheduleResubscribe() {
-    if (resubTimer) return;
-    const delay = RESUB_DELAYS[Math.min(resubAttempt, RESUB_DELAYS.length - 1)];
-    resubAttempt++;
-    console.warn(`[HotS Overlay] Re-subscribing in ${delay}ms (attempt ${resubAttempt})`);
-    resubTimer = setTimeout(() => {
-      resubTimer = null;
-      window.Twitch.ext.unlisten('broadcast', onPubSubMessage);
-      window.Twitch.ext.listen('broadcast', onPubSubMessage);
-    }, delay);
-  }
+  // ─── PubSub handler ──────────────────────────────────────────────
 
   function onPubSubMessage(_target, _contentType, rawMessage) {
     try {
       const msg = JSON.parse(rawMessage);
-      if (msg.type === 'new_game' && msg.game) {
-        resubAttempt = 0; // successful message resets backoff
-        const card = renderGame(normalizeGame(msg.game));
-        gameList.insertBefore(card, gameList.firstChild);
-        // Keep at most 10 entries
-        while (gameList.children.length > 10) {
-          gameList.removeChild(gameList.lastChild);
-        }
+      if (msg.type === 'session_stats' && msg.session) {
+        renderSessionStats(msg.session);
       }
     } catch (err) {
       console.error('[HotS Overlay] PubSub parse error:', err.message);
@@ -139,11 +122,6 @@
   }
 
   // ─── Twitch Extension lifecycle ──────────────────────────────────
-
-  window.Twitch.ext.onError(err => {
-    console.error('[HotS Overlay] Extension error:', err);
-    scheduleResubscribe();
-  });
 
   window.Twitch.ext.onAuthorized(() => {
     // Read broadcaster configuration saved via config.html

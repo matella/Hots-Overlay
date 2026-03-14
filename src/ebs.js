@@ -16,29 +16,23 @@ const config = require('./config');
  *   - Event-driven (no polling): chokidar file watcher fires on new .StormReplay files
  *   - Rate limiting: per-channel queue draining at 1-second intervals (Twitch limit)
  *
- * PubSub message payload schema (type: 'new_game'):
+ * PubSub message payload schema (type: 'session_stats'):
  *
  * {
- *   type: 'new_game',
- *   game: {
- *     gameDate:  string,    // ISO 8601, e.g. "2024-03-14T21:00:00Z"
- *     map:       string,    // Map name, e.g. "Towers of Doom"
- *     mapImage:  string,    // Absolute CDN URL to map background image
- *     gameMode:  string,    // "Storm League" | "Quick Match" | "Unranked Draft" | ...
- *     duration:  number,    // Game length in seconds
- *     result:    string,    // "win" | "defeat"
- *     myTeam:    Player[],  // Broadcaster's team (5 players)
- *     theirTeam: Player[],  // Opposing team (5 players)
+ *   type: 'session_stats',
+ *   session: {
+ *     wins:    number,       // Wins in today's session
+ *     losses:  number,       // Losses in today's session
+ *     winRate: number,       // Win percentage (0–100)
+ *     heroes:  HeroEntry[],  // Heroes played today, most-recent-first (one per game)
  *   }
  * }
  *
- * Player: {
- *   toonHandle:  string,   // e.g. "2-Hero-1-1234567"
- *   playerName:  string,   // Display name
- *   hero:        string,   // Full hero name, e.g. "Zeratul"
- *   heroShort:   string,   // Abbreviated name, e.g. "zeratul"
- *   heroImage:   string,   // Absolute CDN URL to hero portrait
- *   isMe:        boolean,  // true only for the broadcaster's own entry
+ * HeroEntry: {
+ *   hero:      string,   // Full hero name, e.g. "Zeratul"
+ *   heroShort: string,   // Abbreviated name, e.g. "zeratul"
+ *   heroImage: string,   // Absolute CDN URL to hero portrait
+ *   win:       boolean,  // Whether that game was a win
  * }
  *
  * Twitch PubSub constraints:

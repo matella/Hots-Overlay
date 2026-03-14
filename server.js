@@ -76,12 +76,23 @@ function onNewReplay(filePath) {
     });
   }
 
-  if (config.twitch.broadcasterId && config.twitch.clientId) {
-    const grouped = db.getRecentGroupedGames(config.toonHandle, db.ALL_MODES, 1);
-    if (grouped.length > 0) {
-      ebs.sendPubSubMessage(config.twitch.broadcasterId, { type: 'new_game', game: grouped[0] })
-        .catch(err => console.error('[ebs] PubSub failed:', err.message));
-    }
+  if (config.twitch.broadcasterId && config.twitch.clientId && config.toonHandle) {
+    const todayGames = db.getTodayGames([config.toonHandle], config.gameMode);
+    const stats = db.computeStats(todayGames);
+    ebs.sendPubSubMessage(config.twitch.broadcasterId, {
+      type: 'session_stats',
+      session: {
+        wins: stats.wins,
+        losses: stats.losses,
+        winRate: stats.winRate,
+        heroes: todayGames.map(g => ({
+          hero: g.hero,
+          heroShort: g.hero_short,
+          heroImage: getHeroImageUrl(g.hero),
+          win: Boolean(g.win),
+        })),
+      },
+    }).catch(err => console.error('[ebs] PubSub failed:', err.message));
   }
 }
 
