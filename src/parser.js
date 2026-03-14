@@ -79,8 +79,21 @@ function parseReplay(filePath) {
   const teams = [0, 1].map(teamIndex => {
     const teamPlayers = players.filter(p => p.teamIndex === teamIndex);
     const win = teamPlayers.some(p => p.win === 1);
-    return { teamIndex, win, players: teamPlayers };
+    return { teamIndex, win, players: teamPlayers, bans: [] };
   });
+
+  // Extract bans per team (only populated in draft modes)
+  if (result.match.bans) {
+    for (const [teamKey, bansForTeam] of Object.entries(result.match.bans)) {
+      const teamIndex = parseInt(teamKey, 10); // parser keys are "0" and "1"
+      if ((teamIndex === 0 || teamIndex === 1) && Array.isArray(bansForTeam)) {
+        teams[teamIndex].bans = bansForTeam
+          .filter(b => b && b.hero)
+          .sort((a, b) => a.order - b.order)
+          .map(b => normalizeHeroName(b.hero));
+      }
+    }
+  }
 
   return { players, teams, gameFingerprint };
 }
