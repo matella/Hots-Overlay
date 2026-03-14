@@ -9,6 +9,7 @@ const { getHeroImageUrl } = require('./heroNames');
 const { getMapImageUrl } = require('./mapImages');
 const { parseReplay } = require('./parser');
 const { verifyExtensionJWT } = require('./twitch');
+const { Match } = require('./db/match.model');
 
 const router = express.Router();
 
@@ -263,6 +264,14 @@ function processReplayFile(filename, filePath, res) {
   db.markFileProcessed(filename);
   if (parseResult.gameFingerprint) {
     db.storeGameFingerprint(parseResult.gameFingerprint, filename);
+  }
+
+  if (parseResult.matchDoc) {
+    Match.findOneAndUpdate(
+      { fingerprint: parseResult.gameFingerprint },
+      { $setOnInsert: parseResult.matchDoc },
+      { upsert: true }
+    ).catch(err => console.error(`[upload] MongoDB upsert failed for ${filename}: ${err.message}`));
   }
 
   for (const p of parsedPlayers) {
