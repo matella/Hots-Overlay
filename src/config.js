@@ -16,6 +16,9 @@ const config = Object.freeze({
   gameMode: process.env.GAME_MODE || 'Storm League',
   authToken: process.env.AUTH_TOKEN || null,
   modeLabels,
+  httpsPort: parseInt(process.env.HTTPS_PORT, 10) || null,
+  sslKeyPath: process.env.SSL_KEY_PATH || null,
+  sslCertPath: process.env.SSL_CERT_PATH || null,
   twitch: Object.freeze({
     // From the Twitch Developer Console > Extensions > your extension
     clientId: process.env.TWITCH_CLIENT_ID || null,

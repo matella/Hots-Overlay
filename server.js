@@ -1,6 +1,7 @@
 console.log('[startup] Loading modules...');
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const { WebSocketServer } = require('ws');
 const path = require('path');
@@ -28,11 +29,16 @@ app.use('/api', routes);
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+let wssHttps = null;
+
 function broadcast(data) {
   const msg = JSON.stringify(data);
-  for (const client of wss.clients) {
-    if (client.readyState === 1) {
-      try { client.send(msg); } catch {}
+  for (const wsServer of [wss, wssHttps]) {
+    if (!wsServer) continue;
+    for (const client of wsServer.clients) {
+      if (client.readyState === 1) {
+        try { client.send(msg); } catch {}
+      }
     }
   }
 }
@@ -80,6 +86,22 @@ function onNewReplay(filePath) {
 }
 
 routes.init(broadcast);
+
+if (config.httpsPort && config.sslKeyPath && config.sslCertPath) {
+  try {
+    const sslOptions = {
+      key: fs.readFileSync(config.sslKeyPath),
+      cert: fs.readFileSync(config.sslCertPath),
+    };
+    const httpsServer = https.createServer(sslOptions, app);
+    wssHttps = new WebSocketServer({ server: httpsServer });
+    httpsServer.listen(config.httpsPort, () => {
+      console.log(`Overlay (HTTPS): https://localhost:${config.httpsPort}`);
+    });
+  } catch (err) {
+    console.warn('[https] Could not start HTTPS server:', err.message);
+  }
+}
 
 // Start listening immediately so health checks pass while replays are scanning
 server.listen(config.port, async () => {
