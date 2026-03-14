@@ -141,20 +141,13 @@
   function onPubSubMessage(_target, _contentType, rawMessage) {
     try {
       const msg = JSON.parse(rawMessage);
-      if (msg.type !== 'new_game' || !msg.game) return;
+      if (msg.type !== 'session_stats' || !msg.session) return;
 
       resubAttempt = 0; // successful message resets backoff
 
-      const game = msg.game;
-
-      // Filter by tracked player if resolved
-      if (resolvedHandles && !resolvedHandles.includes(game.toonHandle)) return;
-
-      // Filter by game mode if configured
-      if (gameMode && game.gameMode !== gameMode) return;
-
-      addPortrait(game);
-      refreshStats();
+      const { wins, losses, winRate, heroes } = msg.session;
+      updateStats({ wins, losses, winRate });
+      renderPortraits(heroes);
     } catch (err) {
       console.error('[HotS Overlay] PubSub parse error:', err.message);
     }

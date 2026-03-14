@@ -86,19 +86,37 @@
     }
   }
 
+  // ─── Session stats ───────────────────────────────────────────────
+
+  function renderSessionStats(session) {
+    let container = document.getElementById('session-stats');
+    if (!container) return;
+
+    const record = document.createElement('div');
+    record.className = 'session-record';
+    record.textContent = `${session.wins}W / ${session.losses}L`;
+
+    const heroes = document.createElement('div');
+    heroes.className = 'session-heroes';
+    for (const entry of session.heroes) {
+      heroes.appendChild(makeHeroIcon(
+        { hero: entry.hero, heroImage: entry.heroImage, playerName: entry.hero },
+        false,
+      ));
+    }
+
+    container.innerHTML = '';
+    container.appendChild(record);
+    container.appendChild(heroes);
+  }
+
   // ─── PubSub handler ──────────────────────────────────────────────
 
   function onPubSubMessage(_target, _contentType, rawMessage) {
     try {
       const msg = JSON.parse(rawMessage);
-      if (msg.type === 'new_game' && msg.game) {
-        // Prepend the new game card at the top
-        const card = renderGame(msg.game);
-        gameList.insertBefore(card, gameList.firstChild);
-        // Keep at most 10 entries
-        while (gameList.children.length > 10) {
-          gameList.removeChild(gameList.lastChild);
-        }
+      if (msg.type === 'session_stats' && msg.session) {
+        renderSessionStats(msg.session);
       }
     } catch (err) {
       console.error('[HotS Overlay] PubSub parse error:', err.message);
