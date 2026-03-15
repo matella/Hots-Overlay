@@ -3,9 +3,14 @@
 /**
  * Migration script: SQLite replays → MongoDB matches
  *
- * Reads all rows from the SQLite `replays` table, groups them by game
+ * Reads rows from the SQLite `replays` table, groups them by game
  * (using fingerprints from `game_fingerprints`), reconstructs Match
- * documents, and upserts them into MongoDB.
+ * documents, and inserts them into MongoDB.
+ *
+ * Only processes NEW data:
+ *   - Skips games whose fingerprint is already fully present in MongoDB.
+ *   - Completes games whose fingerprint exists in MongoDB but whose player
+ *     data is incomplete (player count in Mongo < player count in SQLite).
  *
  * Usage:
  *   node scripts/migrate-sqlite-to-mongo.js
@@ -123,35 +128,89 @@ async function main() {
 
   console.log(`[migrate] ${gamesByFingerprint.size} unique games to process (${duplicatesSkipped} duplicate files skipped).`);
 
-  // --- Upsert into MongoDB ---------------------------------------------------
+  // --- Pre-fetch existing fingerprints from MongoDB --------------------------
+  // Only load the fingerprint field — lightweight even for large collections.
+  const existingFingerprints = new Set(
+    (await Match.find({}, { fingerprint: 1, _id: 0 }).lean()).map(d => d.fingerprint),
+  );
+  console.log(`[migrate] ${existingFingerprints.size} games already in MongoDB.`);
+
+  // --- Separate new vs. already-known games ----------------------------------
+  const newGames = [];
+  const existingGames = [];
+
+  for (const game of gamesByFingerprint.values()) {
+    if (!existingFingerprints.has(game.fingerprint)) {
+      newGames.push(game);
+    } else {
+      existingGames.push(game);
+    }
+  }
+
+  console.log(`[migrate] ${newGames.length} new games to insert, ${existingGames.length} already present.`);
+
+  // --- Phase 1: Insert new games ---------------------------------------------
   let migrated = 0;
-  let skipped = 0;
   let errors = 0;
 
-  for (const { fingerprint, filename, rows } of gamesByFingerprint.values()) {
+  for (const { fingerprint, filename, rows } of newGames) {
     const matchDoc = buildMatchDoc(fingerprint, filename, rows);
     try {
-      const result = await Match.updateOne(
-        { fingerprint },
-        { $setOnInsert: matchDoc },
-        { upsert: true },
-      );
-      if (result.upsertedCount > 0) {
-        migrated++;
+      await Match.create(matchDoc);
+      migrated++;
+    } catch (err) {
+      console.error(`[migrate] Error inserting ${filename}: ${err.message}`);
+      errors++;
+    }
+  }
+
+  // --- Phase 2: Complete incomplete existing records -------------------------
+  // An existing record is "incomplete" if its total player count in MongoDB is
+  // less than the number of rows we have for that game in SQLite.
+  let completed = 0;
+  let skipped = 0;
+
+  if (existingGames.length > 0) {
+    const existingFps = existingGames.map(g => g.fingerprint);
+    const existingDocs = await Match.find(
+      { fingerprint: { $in: existingFps } },
+      { fingerprint: 1, teams: 1, _id: 0 },
+    ).lean();
+
+    const playerCountByFingerprint = new Map(
+      existingDocs.map(doc => {
+        const count = (doc.teams || []).reduce(
+          (sum, t) => sum + (t.players ? t.players.length : 0),
+          0,
+        );
+        return [doc.fingerprint, count];
+      }),
+    );
+
+    for (const { fingerprint, filename, rows } of existingGames) {
+      const existingPlayerCount = playerCountByFingerprint.get(fingerprint) ?? 0;
+      if (existingPlayerCount < rows.length) {
+        // Incomplete — update with full player data from SQLite
+        const matchDoc = buildMatchDoc(fingerprint, filename, rows);
+        try {
+          await Match.updateOne({ fingerprint }, { $set: { teams: matchDoc.teams } });
+          completed++;
+        } catch (err) {
+          console.error(`[migrate] Error completing ${filename}: ${err.message}`);
+          errors++;
+        }
       } else {
         skipped++;
       }
-    } catch (err) {
-      console.error(`[migrate] Error upserting ${filename}: ${err.message}`);
-      errors++;
     }
   }
 
   // --- Report ----------------------------------------------------------------
   console.log('\n=== Migration complete ===');
-  console.log(`  Migrated : ${migrated}`);
-  console.log(`  Skipped  : ${skipped}  (already in MongoDB)`);
-  console.log(`  Errors   : ${errors}`);
+  console.log(`  Migrated  : ${migrated}  (new records inserted)`);
+  console.log(`  Completed : ${completed}  (existing records with missing players updated)`);
+  console.log(`  Skipped   : ${skipped}  (already complete in MongoDB)`);
+  console.log(`  Errors    : ${errors}`);
 
   await mongoose.disconnect();
 }
