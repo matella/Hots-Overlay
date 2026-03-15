@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>HotS Overlay – Configuration</title>
+  <style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #18181b; color: #efeff1; padding: 20px; font-size: 13px; }
+.config-panel { max-width: 400px; }
+h2 { font-size: 18px; font-weight: 700; margin-bottom: 4px; color: #bf94ff; }
+.subtitle { color: #adadb8; margin-bottom: 20px; font-size: 12px; }
+.field { margin-bottom: 16px; display: flex; flex-direction: column; gap: 4px; }
+label { font-weight: 600; font-size: 12px; color: #dedee3; }
+.optional { font-weight: 400; color: #adadb8; }
+input, select { background: #0e0e10; border: 1px solid #3a3a3d; border-radius: 4px; color: #efeff1; padding: 7px 10px; font-size: 13px; width: 100%; outline: none; }
+input:focus, select:focus { border-color: #9147ff; }
+.hint { color: #adadb8; font-size: 11px; }
+button { background: #9147ff; color: white; border: none; border-radius: 4px; padding: 9px 20px; font-size: 13px; font-weight: 700; cursor: pointer; margin-top: 4px; }
+button:hover { background: #772ce8; }
+button:active { background: #5c16c5; }
+.status { margin-top: 10px; font-size: 12px; min-height: 16px; }
+.status.ok { color: #4ade80; }
+.status.error { color: #f87171; }
+  </style>
+</head>
+<body>
+  <div class="config-panel">
+    <h2>HotS Overlay</h2>
+    <p class="subtitle">Configure your HotS Overlay settings.</p>
+
+    <div class="field">
+      <label for="player">Player Name / Toon Handle</label>
+      <input type="text" id="player" placeholder="PlayerName#1234">
+      <span class="hint">Your battle tag or the name shown in replays.</span>
+    </div>
+
+    <div class="field">
+      <label for="game-mode">Game Mode</label>
+      <select id="game-mode">
+        <option value="">Default (Storm League)</option>
+        <option value="Storm League">Storm League</option>
+        <option value="Quick Match">Quick Match</option>
+        <option value="Custom">Custom / Scrims</option>
+        <option value="all">All Modes</option>
+      </select>
+    </div>
+
+    <button id="save-btn">Save</button>
+    <p id="status" class="status"></p>
+  </div>
+
+  <script src="https://extension-files.twitch.tv/helper/v1/twitch-ext.min.js"></script>
+  <script src="js/config.js"></script>
+</body>
+</html>

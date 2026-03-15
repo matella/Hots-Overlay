@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HotS Match History</title>
+  <link rel="stylesheet" href="css/overlay.css">
+</head>
+<body>
+  <div id="portrait-overlay">
+    <div id="stats-bar">
+      <span id="mode-label" class="stat mode-lbl"></span>
+      <span class="sep">&bull;</span>
+      <span id="win-count" class="stat win">0W</span>
+      <span class="sep">&ndash;</span>
+      <span id="loss-count" class="stat loss">0L</span>
+      <span class="sep">|</span>
+      <span id="win-rate" class="stat rate">0%</span>
+    </div>
+    <div id="portrait-row"></div>
+  </div>
+  <script src="https://extension-files.twitch.tv/helper/v1/twitch-ext.min.js"></script>
+  <script src="js/overlay.js"></script>
+</body>
+</html>

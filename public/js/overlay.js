@@ -25,12 +25,23 @@
     document.getElementById('win-rate').textContent = `${winRate.toFixed(1)}%`;
   }
 
+  // Validate image URL to prevent javascript: or data: injection
+  function isSafeImageUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    if (url.startsWith('/') || url.startsWith('https://') || url.startsWith('http://')) return true;
+    return false;
+  }
+
   function createTile(game, animate) {
     const tile = document.createElement('div');
     tile.className = `game-tile ${game.win ? 'win' : 'loss'}${animate ? ' new' : ''}`;
 
     const img = document.createElement('img');
-    img.src = game.heroImage;
+    const heroUrl = game.heroImage;
+    if (isSafeImageUrl(heroUrl)) {
+      // URL is validated: only /, https://, or http:// prefixes allowed
+      img.setAttribute('src', heroUrl);
+    }
     img.alt = game.hero;
     img.title = `${game.hero} - ${game.map} (${getModeLabel(game.gameMode)})`;
     img.onerror = () => { img.style.display = 'none'; };
@@ -96,9 +107,13 @@
     }
   }
 
+  let wsReconnectDelay = 5000;
+
   function connectWebSocket() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${location.host}`);
+
+    ws.onopen = () => { wsReconnectDelay = 5000; };
 
     ws.onmessage = (e) => {
       let data;
@@ -118,7 +133,10 @@
     };
 
     ws.onerror = () => {};
-    ws.onclose = () => setTimeout(connectWebSocket, 5000);
+    ws.onclose = () => {
+      setTimeout(connectWebSocket, wsReconnectDelay);
+      wsReconnectDelay = Math.min(wsReconnectDelay * 1.5, 60000);
+    };
   }
 
   async function init() {

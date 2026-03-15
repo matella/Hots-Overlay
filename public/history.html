@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HotS Overlay – Match History</title>
+  <link rel="stylesheet" href="/css/history.css">
+</head>
+<body>
+  <div id="app">
+    <header class="page-header">
+      <h1>Match History</h1>
+      <a href="/" class="back-link">&larr; Overlay</a>
+    </header>
+
+    <div class="filters">
+      <div class="filter-group">
+        <label for="filter-player">Player</label>
+        <input type="text" id="filter-player" placeholder="Name or toon handle">
+      </div>
+      <div class="filter-group">
+        <label for="filter-mode">Mode</label>
+        <select id="filter-mode">
+          <option value="all">All Modes</option>
+        </select>
+      </div>
+      <button id="filter-apply">Apply</button>
+    </div>
+
+    <div id="matches-container">
+      <div id="loading-state" class="loading-state">Loading&hellip;</div>
+      <div id="empty-state" class="empty-state" hidden>No matches found.</div>
+      <table id="matches-table" class="matches-table" hidden>
+        <thead>
+          <tr>
+            <th class="col-map">Map</th>
+            <th class="col-team">Team 1</th>
+            <th class="col-bans">Bans</th>
+            <th class="col-team">Team 2</th>
+            <th class="col-result">Result</th>
+            <th class="col-mode">Mode</th>
+            <th class="col-date">Date</th>
+            <th class="col-dur">Duration</th>
+          </tr>
+        </thead>
+        <tbody id="matches-body"></tbody>
+      </table>
+    </div>
+
+    <div class="pagination" id="pagination" hidden>
+      <button id="page-prev" disabled>Previous</button>
+      <span id="page-indicator">Page 1 of 1</span>
+      <button id="page-next" disabled>Next</button>
+    </div>
+  </div>
+
+  <script src="/js/history.js"></script>
+</body>
+</html>

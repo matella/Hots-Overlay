@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>HotS Overlay – Configuration</title>
+  <link rel="stylesheet" href="css/config.css">
+</head>
+<body>
+  <div class="config-panel">
+    <h2>HotS Overlay</h2>
+    <p class="subtitle">Configure your self-hosted HotS Overlay server connection.</p>
+
+    <div class="field">
+      <label for="server-url">EBS Server URL</label>
+      <input type="url" id="server-url" placeholder="https://your-hots-server.com">
+      <span class="hint">The URL where your HotS Overlay server is running.</span>
+    </div>
+
+    <div class="field">
+      <label for="auth-token">Auth Token <span class="optional">(optional)</span></label>
+      <input type="password" id="auth-token" placeholder="your-auth-token">
+      <span class="hint">Only needed if your server has AUTH_TOKEN set in its .env.</span>
+    </div>
+
+    <div class="field">
+      <label for="player">Player Name / Toon Handle</label>
+      <input type="text" id="player" placeholder="PlayerName#1234">
+      <span class="hint">Your battle tag or the name shown in replays.</span>
+    </div>
+
+    <div class="field">
+      <label for="game-mode">Game Mode</label>
+      <select id="game-mode">
+        <option value="">Default (Storm League)</option>
+        <option value="Storm League">Storm League</option>
+        <option value="Quick Match">Quick Match</option>
+        <option value="Custom">Custom / Scrims</option>
+        <option value="all">All Modes</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="overlay-position">Overlay Position</label>
+      <select id="overlay-position">
+        <option value="bottom-left">Bottom Left (default)</option>
+        <option value="bottom-right">Bottom Right</option>
+        <option value="top-left">Top Left</option>
+        <option value="top-right">Top Right</option>
+      </select>
+    </div>
+
+    <div class="field field-inline">
+      <input type="checkbox" id="overlay-hidden">
+      <label for="overlay-hidden">Hide overlay</label>
+    </div>
+
+    <button id="save-btn">Save</button>
+    <p id="status" class="status"></p>
+  </div>
+
+  <script src="https://extension-files.twitch.tv/helper/v1/twitch-ext.min.js"></script>
+  <script src="js/config.js"></script>
+</body>
+</html>

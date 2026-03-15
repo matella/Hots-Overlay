@@ -5,14 +5,19 @@
   "license": "MIT",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "migrate": "node scripts/migrate-sqlite-to-mongo.js"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "chokidar": "^5.0.0",
+    "cors": "^2.8.5",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.3.1",
     "hots-parser": "^7.55.7",
+    "jsonwebtoken": "9.0.3",
+    "mongoose": "^9.3.0",
     "multer": "^2.1.1",
     "swagger-ui-express": "^5.0.1",
     "ws": "^8.19.0"
