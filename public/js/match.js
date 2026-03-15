@@ -320,7 +320,10 @@
 
     if (match.hasReplay) {
       const a = el('a', 'btn btn-download', 'Download Replay');
-      a.href = `/api/matches/${encodeURIComponent(match.id)}/replay`;
+      // Validate MongoDB ObjectId format before constructing URL (defense-in-depth)
+      if (/^[a-f0-9]{24}$/.test(match.id)) {
+        a.href = `/api/matches/${match.id}/replay`;
+      }
       if (match.filename) a.download = match.filename;
       container.appendChild(a);
     } else {
