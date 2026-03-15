@@ -8,9 +8,8 @@ const { WebSocketServer } = require('ws');
 const path = require('path');
 const config = require('./src/config');
 console.log(`[startup] Config loaded — port=${config.port}, replayDir=${config.replayDir}`);
-const db = require('./src/database');
 const mongo = require('./src/db/connection');
-const { Match } = require('./src/db/match.model');
+const { Match, ProcessedFile } = require('./src/db/match.model');
 const { parseReplay, scanAndParseAll } = require('./src/parser');
 const { startWatcher } = require('./src/watcher');
 const { getHeroImageUrl } = require('./src/heroNames');
@@ -20,9 +19,6 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerDoc = require('./src/swagger.json');
 
 fs.mkdirSync(config.replayDir, { recursive: true });
-console.log('[startup] Initializing database...');
-db.initDatabase();
-console.log('[startup] Database ready');
 
 mongo.connect();
 
@@ -80,27 +76,23 @@ function broadcast(data) {
 
 async function onNewReplay(filePath) {
   const filename = path.basename(filePath);
-  if (db.isFileProcessed(filename)) return;
+
+  // Check if already processed
+  if (await ProcessedFile.exists({ filename })) return;
 
   const result = parseReplay(filePath);
   if (!result.players) {
-    db.markFileProcessed(filename);
+    await ProcessedFile.updateOne({ filename }, { $setOnInsert: { filename } }, { upsert: true });
     return;
   }
 
   // Check for duplicate game by fingerprint (same game from different replay file)
-  if (result.gameFingerprint && db.gameExists(result.gameFingerprint)) {
-    db.markFileProcessed(filename);
+  if (result.gameFingerprint && await Match.exists({ fingerprint: result.gameFingerprint })) {
+    await ProcessedFile.updateOne({ filename }, { $setOnInsert: { filename } }, { upsert: true });
     return;
   }
 
-  for (const playerData of result.players) {
-    db.insertReplay(playerData);
-  }
-  if (result.gameFingerprint) {
-    db.storeGameFingerprint(result.gameFingerprint, filename);
-  }
-  db.markFileProcessed(filename);
+  await ProcessedFile.updateOne({ filename }, { $setOnInsert: { filename } }, { upsert: true });
 
   if (result.matchDoc) {
     try {

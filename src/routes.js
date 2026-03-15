@@ -4,13 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
-const db = require('./database');
 const config = require('./config');
 const { getHeroImageUrl } = require('./heroNames');
 const { getMapImageUrl } = require('./mapImages');
 const { parseReplay } = require('./parser');
 const { verifyExtensionJWT } = require('./twitch');
-const { Match } = require('./db/match.model');
+const { Match, ProcessedFile } = require('./db/match.model');
 const { loadHeroesForMatch, resolveTalent } = require('./talentIcons');
 
 const router = express.Router();
@@ -36,6 +35,18 @@ router.use(apiLimiter);
 
 let broadcast = () => {};
 function init(broadcastFn) { broadcast = broadcastFn; }
+
+const ALL_MODES = 'all';
+
+function computeStats(games) {
+  const wins = games.filter(g => g.win).length;
+  const losses = games.length - wins;
+  return {
+    wins,
+    losses,
+    winRate: games.length > 0 ? (wins / games.length) * 100 : 0,
+  };
+}
 
 // --- Extension JWT middleware (required — verifies Twitch viewer identity via Authorization header) ---
 function requireExtJwt(req, res, next) {
@@ -77,24 +88,43 @@ function asString(val) {
   return val != null ? String(val) : '';
 }
 
-function resolveMode(query) {
+async function resolveMode(query) {
   const mode = asString(query.mode);
   if (!mode) return config.gameMode;
-  if (mode.toLowerCase() === 'all') return db.ALL_MODES;
-  const match = db.getAvailableModes().find(m => m.toLowerCase() === mode.toLowerCase());
+  if (mode.toLowerCase() === 'all') return ALL_MODES;
+  const modes = await Match.distinct('gameMode');
+  const match = modes.find(m => m.toLowerCase() === mode.toLowerCase());
   return match || mode;
+}
+
+async function resolveToonHandle(query) {
+  if (!query) return null;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const doc = await Match.findOne(
+    { 'teams.players': { $elemMatch: { $or: [
+      { toonHandle: query },
+      { playerName: new RegExp('^' + escaped + '$', 'i') },
+    ] } } },
+    'teams.players'
+  ).lean();
+  if (!doc) return null;
+  for (const t of doc.teams || [])
+    for (const p of t.players || [])
+      if (p.toonHandle === query || p.playerName?.toLowerCase() === query.toLowerCase())
+        return p.toonHandle;
+  return null;
 }
 
 // Returns an array of toon_handles, or null.
 // Supports: ?player=name, ?player=toon1,toon2, ?player=all
-function resolvePlayer(query) {
+async function resolvePlayer(query) {
   const player = asString(query.player);
   if (!player) return config.toonHandle ? [config.toonHandle] : null;
   if (player.toLowerCase() === 'all') return null; // null = all players (no filter)
   const parts = player.split(',').map(p => p.trim()).filter(Boolean);
   const resolved = [];
   for (const p of parts) {
-    const toon = db.resolveToonHandle(p);
+    const toon = await resolveToonHandle(p);
     resolved.push(toon || p);
   }
   return resolved;
@@ -127,8 +157,8 @@ function flattenMatchesToGames(matches, players) {
 
 router.get('/today', async (req, res) => {
   try {
-    const players = resolvePlayer(req.query);
-    const mode = resolveMode(req.query);
+    const players = await resolvePlayer(req.query);
+    const mode = await resolveMode(req.query);
 
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
@@ -136,12 +166,12 @@ router.get('/today', async (req, res) => {
     endOfDay.setHours(23, 59, 59, 999);
 
     const query = { gameDate: { $gte: startOfDay, $lte: endOfDay } };
-    if (mode !== db.ALL_MODES) query.gameMode = mode;
+    if (mode !== ALL_MODES) query.gameMode = mode;
     if (players) query['teams.players.toonHandle'] = { $in: players };
 
     const matches = await Match.find(query).sort({ gameDate: -1 });
     const games = flattenMatchesToGames(matches, players);
-    const stats = db.computeStats(games);
+    const stats = computeStats(games);
     res.json({ games, stats, mode, player: players });
   } catch (err) {
     console.error('[today] error:', err.message);
@@ -154,20 +184,20 @@ router.get('/session/:date', async (req, res) => {
     return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' });
   }
   try {
-    const players = resolvePlayer(req.query);
-    const mode = resolveMode(req.query);
+    const players = await resolvePlayer(req.query);
+    const mode = await resolveMode(req.query);
 
     const [year, month, day] = req.params.date.split('-').map(Number);
     const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
     const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
 
     const query = { gameDate: { $gte: startOfDay, $lte: endOfDay } };
-    if (mode !== db.ALL_MODES) query.gameMode = mode;
+    if (mode !== ALL_MODES) query.gameMode = mode;
     if (players) query['teams.players.toonHandle'] = { $in: players };
 
     const matches = await Match.find(query).sort({ gameDate: -1 });
     const games = flattenMatchesToGames(matches, players);
-    const stats = db.computeStats(games);
+    const stats = computeStats(games);
     res.json({ date: req.params.date, games, stats, mode, player: players });
   } catch (err) {
     console.error('[session] error:', err.message);
@@ -175,44 +205,55 @@ router.get('/session/:date', async (req, res) => {
   }
 });
 
-router.get('/sessions', (req, res) => {
-  const players = resolvePlayer(req.query);
-  const mode = resolveMode(req.query);
-  const parsed = parseInt(asString(req.query.limit), 10);
-  const limit = Math.min(Number.isNaN(parsed) ? 10 : parsed, 50);
-  const sessions = db.getRecentSessions(players, limit, mode).map(session => ({
-    ...session,
-    games: session.games.map(g => ({
-      id: g.id,
-      toonHandle: g.toon_handle,
-      playerName: g.player_name,
-      gameDate: g.game_date,
-      map: g.map,
-      gameMode: g.game_mode,
-      hero: g.hero,
-      heroShort: g.hero_short,
-      heroImage: getHeroImageUrl(g.hero),
-      win: Boolean(g.win),
-      duration: g.duration,
-    })),
-  }));
-  res.json({ sessions, mode, player: players });
+router.get('/sessions', async (req, res) => {
+  try {
+    const players = await resolvePlayer(req.query);
+    const mode = await resolveMode(req.query);
+    const parsed = parseInt(asString(req.query.limit), 10);
+    const limit = Math.min(Number.isNaN(parsed) ? 10 : parsed, 50);
+
+    const query = {};
+    if (mode !== ALL_MODES) query.gameMode = mode;
+    if (players) query['teams.players.toonHandle'] = { $in: players };
+
+    const matches = await Match.find(query).sort({ gameDate: -1 }).lean();
+
+    // Group by date (YYYY-MM-DD), limiting to N distinct session dates
+    const sessionMap = new Map();
+    for (const match of matches) {
+      const d = match.gameDate.toISOString().slice(0, 10);
+      if (sessionMap.size >= limit && !sessionMap.has(d)) break;
+      if (!sessionMap.has(d)) sessionMap.set(d, []);
+      sessionMap.get(d).push(match);
+    }
+
+    const sessions = [];
+    for (const [date, sessionMatches] of sessionMap) {
+      const games = flattenMatchesToGames(sessionMatches, players);
+      sessions.push({ date, ...computeStats(games), games });
+    }
+
+    res.json({ sessions, mode, player: players });
+  } catch (err) {
+    console.error('[sessions] error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/recent', async (req, res) => {
   try {
-    const players = resolvePlayer(req.query);
-    const mode = resolveMode(req.query);
+    const players = await resolvePlayer(req.query);
+    const mode = await resolveMode(req.query);
     const parsedLimit = parseInt(asString(req.query.limit), 10);
     const limit = Math.min(Number.isNaN(parsedLimit) ? 10 : parsedLimit, 10);
 
     const query = {};
-    if (mode !== db.ALL_MODES) query.gameMode = mode;
+    if (mode !== ALL_MODES) query.gameMode = mode;
     if (players) query['teams.players.toonHandle'] = { $in: players };
 
     const matches = await Match.find(query).sort({ gameDate: -1 }).limit(limit);
     const games = flattenMatchesToGames(matches, players);
-    const stats = db.computeStats(games);
+    const stats = computeStats(games);
     res.json({ games, stats, mode, player: players });
   } catch (err) {
     console.error('[recent] error:', err.message);
@@ -223,54 +264,83 @@ router.get('/recent', async (req, res) => {
 // Returns recent games grouped with all 10 heroes (both teams) per game.
 // Used by the Twitch Extension video overlay sidebar.
 // Requires a single player to determine "my team" vs "their team".
-router.get('/recent-full', requireExtJwt, (req, res) => {
-  const players = resolvePlayer(req.query);
-  if (!players || players.length !== 1) {
-    return res.status(400).json({ error: 'Exactly one player required. Use ?player= or set TOON_HANDLE.' });
+router.get('/recent-full', requireExtJwt, async (req, res) => {
+  try {
+    const players = await resolvePlayer(req.query);
+    if (!players || players.length !== 1) {
+      return res.status(400).json({ error: 'Exactly one player required. Use ?player= or set TOON_HANDLE.' });
+    }
+    const toonHandle = players[0];
+    const mode = await resolveMode(req.query);
+    const parsedLimit = parseInt(asString(req.query.limit), 10);
+    const limit = Math.min(Number.isNaN(parsedLimit) ? 10 : parsedLimit, 10);
+
+    const query = { 'teams.players.toonHandle': toonHandle };
+    if (mode !== ALL_MODES) query.gameMode = mode;
+
+    const matches = await Match.find(query).sort({ gameDate: -1 }).limit(limit).lean();
+
+    const games = matches.map(match => {
+      // Find the tracked player's team to determine win/loss
+      let myWin = false;
+      for (const team of match.teams) {
+        if (team.players.some(p => p.toonHandle === toonHandle)) {
+          myWin = Boolean(team.win);
+          break;
+        }
+      }
+
+      const allPlayers = match.teams.flatMap(team =>
+        team.players.map(p => ({
+          toonHandle: p.toonHandle,
+          playerName: p.playerName,
+          hero: p.hero,
+          heroShort: p.heroShort,
+          win: Boolean(team.win),
+          isMe: p.toonHandle === toonHandle,
+        }))
+      );
+
+      const myTeam = allPlayers
+        .filter(p => p.win === myWin)
+        .map(p => ({
+          toonHandle: p.toonHandle,
+          playerName: p.playerName,
+          hero: p.hero,
+          heroShort: p.heroShort,
+          heroImage: getHeroImageUrl(p.hero),
+          isMe: p.isMe,
+        }));
+
+      const theirTeam = allPlayers
+        .filter(p => p.win !== myWin)
+        .map(p => ({
+          toonHandle: p.toonHandle,
+          playerName: p.playerName,
+          hero: p.hero,
+          heroShort: p.heroShort,
+          heroImage: getHeroImageUrl(p.hero),
+          isMe: false,
+        }));
+
+      return {
+        gameDate: match.gameDate,
+        map: match.map,
+        mapImage: getMapImageUrl(match.map),
+        gameMode: match.gameMode,
+        duration: match.duration,
+        result: myWin ? 'win' : 'defeat',
+        myTeam,
+        theirTeam,
+      };
+    });
+
+    const stats = computeStats(games.map(g => ({ win: g.result === 'win' })));
+    res.json({ games, stats, mode, player: toonHandle });
+  } catch (err) {
+    console.error('[recent-full] error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  const toonHandle = players[0];
-  const mode = resolveMode(req.query);
-  const parsedLimit = parseInt(asString(req.query.limit), 10);
-  const limit = Math.min(Number.isNaN(parsedLimit) ? 10 : parsedLimit, 10);
-
-  const rawGames = db.getRecentGroupedGames(toonHandle, mode, limit);
-
-  const games = rawGames.map(g => {
-    const myTeam = g.players
-      .filter(p => p.win === g.myWin)
-      .map(p => ({
-        toonHandle: p.toonHandle,
-        playerName: p.playerName,
-        hero: p.hero,
-        heroShort: p.heroShort,
-        heroImage: getHeroImageUrl(p.hero),
-        isMe: p.isMe,
-      }));
-    const theirTeam = g.players
-      .filter(p => p.win !== g.myWin)
-      .map(p => ({
-        toonHandle: p.toonHandle,
-        playerName: p.playerName,
-        hero: p.hero,
-        heroShort: p.heroShort,
-        heroImage: getHeroImageUrl(p.hero),
-        isMe: false,
-      }));
-    return {
-      gameDate: g.gameDate,
-      map: g.map,
-      mapImage: getMapImageUrl(g.map),
-      gameMode: g.gameMode,
-      duration: g.duration,
-      result: g.myWin ? 'win' : 'defeat',
-      myTeam,
-      theirTeam,
-    };
-  });
-
-  const statsGames = rawGames.map(g => ({ win: Boolean(g.myWin) }));
-  const stats = db.computeStats(statsGames);
-  res.json({ games, stats, mode, player: toonHandle });
 });
 
 const BUILD_ID = new Date().toISOString();
@@ -279,12 +349,33 @@ router.get('/health', (_req, res) => {
   res.json({ status: 'ok', build: BUILD_ID });
 });
 
-router.get('/modes', (_req, res) => {
-  res.json({ modes: db.getAvailableModes(), default: config.gameMode, labels: config.modeLabels });
+router.get('/modes', async (_req, res) => {
+  try {
+    const modes = (await Match.distinct('gameMode')).sort();
+    res.json({ modes, default: config.gameMode, labels: config.modeLabels });
+  } catch (err) {
+    console.error('[modes] error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
-router.get('/players', (_req, res) => {
-  res.json({ players: db.getAvailablePlayers(), default: config.toonHandle });
+router.get('/players', async (_req, res) => {
+  try {
+    const players = await Match.aggregate([
+      { $unwind: '$teams' },
+      { $unwind: '$teams.players' },
+      { $group: {
+        _id: '$teams.players.toonHandle',
+        playerName: { $first: '$teams.players.playerName' },
+      } },
+      { $project: { toonHandle: '$_id', playerName: 1, _id: 0 } },
+      { $sort: { playerName: 1 } },
+    ]);
+    res.json({ players, default: config.toonHandle });
+  } catch (err) {
+    console.error('[players] error:', err.message);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 router.get('/matches', async (req, res) => {
@@ -294,12 +385,15 @@ router.get('/matches', async (req, res) => {
 
   const filter = {};
 
-  // Player filter — resolve name → toonHandle using existing db helper
+  // Player filter — resolve name → toonHandle using MongoDB lookup
   const playerParam = asString(req.query.player);
   if (playerParam && playerParam.toLowerCase() !== 'all') {
-    const toons = playerParam.split(',')
-      .map(p => { const t = db.resolveToonHandle(p.trim()); return t || p.trim(); })
-      .filter(Boolean);
+    const toons = await Promise.all(
+      playerParam.split(',').map(async p => {
+        const t = await resolveToonHandle(p.trim());
+        return t || p.trim();
+      })
+    );
     if (toons.length) filter['teams.players.toonHandle'] = { $in: toons };
   }
 
@@ -551,7 +645,7 @@ async function processReplayFile(filename, filePath, res) {
     return res.status(403).json({ error: 'Path traversal blocked' });
   }
 
-  if (db.replayExists(filename)) {
+  if (await ProcessedFile.exists({ filename })) {
     console.log(`[upload] ${filename}: duplicate`);
     cleanupTempFile(filePath, resolvedDest);
     return res.status(409).json({ status: 'duplicate', filename });
@@ -579,14 +673,14 @@ async function processReplayFile(filename, filePath, res) {
 
   if (parseResult.error) {
     console.warn(`[upload] ${filename}: parse failed — ${parseResult.error}`);
-    db.markFileProcessed(filename);
+    await ProcessedFile.updateOne({ filename }, { $setOnInsert: { filename } }, { upsert: true });
     return res.json({ status: 'ok', filename, parsed: false, destSize, parseError: parseResult.error });
   }
 
   // Check for duplicate game by fingerprint (same game uploaded from different file)
-  if (parseResult.gameFingerprint && db.gameExists(parseResult.gameFingerprint)) {
+  if (parseResult.gameFingerprint && await Match.exists({ fingerprint: parseResult.gameFingerprint })) {
     console.log(`[upload] ${filename}: duplicate game (fingerprint match)`);
-    db.markFileProcessed(filename);
+    await ProcessedFile.updateOne({ filename }, { $setOnInsert: { filename } }, { upsert: true });
     // resolvedDest already validated at function entry
     try { fs.unlinkSync(resolvedDest); } catch {}
     let matchId = null;
@@ -598,22 +692,9 @@ async function processReplayFile(filename, filePath, res) {
   }
 
   const parsedPlayers = parseResult.players;
-  let insertedCount = 0;
-  for (const playerData of parsedPlayers) {
-    try {
-      const result = db.insertReplay(playerData);
-      insertedCount += result.changes;
-    } catch (err) {
-      console.error(`[upload] insert failed for ${playerData.toonHandle}: ${err.message}`);
-    }
-  }
+  await ProcessedFile.updateOne({ filename }, { $setOnInsert: { filename } }, { upsert: true });
 
-  db.markFileProcessed(filename);
-  if (parseResult.gameFingerprint) {
-    db.storeGameFingerprint(parseResult.gameFingerprint, filename);
-  }
-
-  console.log(`[upload] ${filename}: parsed, ${insertedCount} players inserted`);
+  console.log(`[upload] ${filename}: parsed`);
 
   let matchId = null;
   if (parseResult.matchDoc) {
@@ -684,7 +765,7 @@ async function processReplayFile(filename, filePath, res) {
     }
   }
 
-  res.json({ status: 'ok', matchId, gamesAdded: insertedCount, duplicate: false });
+  res.json({ status: 'ok', matchId, duplicate: false });
 }
 
 // Multipart upload (for curl / browser forms)

@@ -27,9 +27,7 @@ services:
     build: .
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
-      - "2222:2222"
     volumes:
-      - overlay-data:/app/data
       - overlay-replays:/app/replays
     environment:
       - TOON_HANDLE=${TOON_HANDLE}
@@ -46,5 +44,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  overlay-data:
   overlay-replays:
