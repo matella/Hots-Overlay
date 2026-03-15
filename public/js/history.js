@@ -51,9 +51,16 @@
     return MODE_SHORT[mode] || mode || '—';
   }
 
+  function isSafeUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return url.startsWith('/') || url.startsWith('https://') || url.startsWith('http://');
+  }
+
   function lazyImg(src, alt, className) {
     const el = document.createElement('img');
-    el.src = src;
+    if (isSafeUrl(src)) {
+      el.setAttribute('src', src);
+    }
     el.alt = alt || '';
     el.className = className || '';
     el.loading = 'lazy';

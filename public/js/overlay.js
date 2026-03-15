@@ -37,8 +37,10 @@
     tile.className = `game-tile ${game.win ? 'win' : 'loss'}${animate ? ' new' : ''}`;
 
     const img = document.createElement('img');
-    if (isSafeImageUrl(game.heroImage)) {
-      img.src = game.heroImage;
+    const heroUrl = game.heroImage;
+    if (isSafeImageUrl(heroUrl)) {
+      // URL is validated: only /, https://, or http:// prefixes allowed
+      img.setAttribute('src', heroUrl);
     }
     img.alt = game.hero;
     img.title = `${game.hero} - ${game.map} (${getModeLabel(game.gameMode)})`;

@@ -29,6 +29,13 @@
     document.getElementById('mode-label').textContent = label;
   }
 
+  // Validate image URL to prevent javascript: or data: injection
+  function isSafeImageUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    if (url.startsWith('/') || url.startsWith('https://') || url.startsWith('http://')) return true;
+    return false;
+  }
+
   function showOffline() {
     const overlay = document.getElementById('portrait-overlay');
     if (overlay) overlay.classList.add('not-streaming');
@@ -46,7 +53,11 @@
     tile.className = 'portrait-tile ' + (game.win ? 'win' : 'loss');
 
     const img = document.createElement('img');
-    img.src = game.heroImage || '';
+    const heroUrl = game.heroImage;
+    if (isSafeImageUrl(heroUrl)) {
+      // URL is validated: only /, https://, or http:// prefixes allowed
+      img.setAttribute('src', heroUrl);
+    }
     img.alt = game.hero || '';
     img.title = `${game.hero} – ${game.map || ''} (${getModeLabel(game.gameMode)})`;
     img.onerror = () => { img.style.opacity = '0.3'; };

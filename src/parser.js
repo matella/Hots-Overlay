@@ -175,6 +175,20 @@ function parseReplay(filePath) {
   const resolvedPath = path.resolve(filePath);
   const filename = path.basename(resolvedPath);
 
+  // Validate the file has the expected replay extension
+  if (!resolvedPath.endsWith('.StormReplay')) {
+    return { error: 'Invalid file type: must be a .StormReplay file' };
+  }
+
+  // Validate the path is within the configured replay directory
+  const replayDir = path.resolve(config.replayDir);
+  const isWin = process.platform === 'win32';
+  const normResolved = isWin ? resolvedPath.toLowerCase() : resolvedPath;
+  const normDir = isWin ? replayDir.toLowerCase() : replayDir;
+  if (!normResolved.startsWith(normDir + path.sep) && normResolved !== normDir) {
+    return { error: 'Path traversal attempt blocked' };
+  }
+
   try {
     fs.statSync(resolvedPath);
   } catch (err) {

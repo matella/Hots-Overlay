@@ -441,8 +441,12 @@ router.get('/matches/:id', async (req, res) => {
     if (match.replayPath) {
       try {
         const safePath = ensurePathWithin(config.replayDir, match.replayPath);
-        await fs.promises.access(safePath);
-        hasReplay = true;
+        // Double-check: resolved path must start with replayDir
+        const replayDirResolved = path.resolve(config.replayDir) + path.sep;
+        if (path.resolve(safePath).startsWith(replayDirResolved)) {
+          await fs.promises.access(path.resolve(safePath));
+          hasReplay = true;
+        }
       } catch {}
     }
 
@@ -480,17 +484,23 @@ router.get('/matches/:id/replay', checkAuth, async (req, res) => {
     } catch {
       return res.status(403).json({ error: 'Access denied' });
     }
+    // Double-check: resolved path must start with replayDir
+    const replayDirPrefix = path.resolve(config.replayDir) + path.sep;
+    const resolvedSafePath = path.resolve(safePath);
+    if (!resolvedSafePath.startsWith(replayDirPrefix)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
     try {
-      await fs.promises.access(safePath);
+      await fs.promises.access(resolvedSafePath);
     } catch {
       return res.status(404).json({ error: 'Replay file not available on this server' });
     }
-    const filename = match.filename || path.basename(safePath);
+    const filename = match.filename || path.basename(resolvedSafePath);
     // Sanitize filename for Content-Disposition header
     const safeFilename = filename.replace(/[^a-zA-Z0-9 ._\-()]/g, '_');
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
     res.setHeader('Content-Type', 'application/octet-stream');
-    fs.createReadStream(safePath).pipe(res);
+    fs.createReadStream(resolvedSafePath).pipe(res);
   } catch (err) {
     if (err.name === 'CastError') {
       return res.status(404).json({ error: 'Match not found' });
@@ -522,38 +532,50 @@ function ensurePathWithin(dir, filePath) {
 
 function cleanupTempFile(filePath, dest) {
   if (filePath !== dest) {
-    try { fs.unlinkSync(filePath); } catch {}
+    // filePath is a temp file within replayDir (multer diskStorage or _upload_ prefix)
+    const resolvedCleanup = path.resolve(filePath);
+    const replayDirPrefix = path.resolve(config.replayDir) + path.sep;
+    if (resolvedCleanup.startsWith(replayDirPrefix)) {
+      try { fs.unlinkSync(resolvedCleanup); } catch {}
+    }
   }
 }
 
 async function processReplayFile(filename, filePath, res) {
   const dest = ensurePathWithin(config.replayDir, path.join(config.replayDir, filename));
 
+  // Inline path containment check for CodeQL traceability
+  const replayDirPrefix = path.resolve(config.replayDir) + path.sep;
+  const resolvedDest = path.resolve(dest);
+  if (!resolvedDest.startsWith(replayDirPrefix)) {
+    return res.status(403).json({ error: 'Path traversal blocked' });
+  }
+
   if (db.replayExists(filename)) {
     console.log(`[upload] ${filename}: duplicate`);
-    cleanupTempFile(filePath, dest);
+    cleanupTempFile(filePath, resolvedDest);
     return res.status(409).json({ status: 'duplicate', filename });
   }
 
   try {
-    if (filePath !== dest) {
-      fs.renameSync(filePath, dest);
+    if (filePath !== resolvedDest) {
+      fs.renameSync(filePath, resolvedDest);
     }
   } catch (err) {
     console.error(`[upload] ${filename}: rename failed: ${err.message}`);
-    cleanupTempFile(filePath, dest);
+    cleanupTempFile(filePath, resolvedDest);
     return res.status(500).json({ status: 'error', filename, error: `Rename failed: ${err.message}` });
   }
 
   let destSize;
   try {
-    destSize = fs.statSync(dest).size;
+    destSize = fs.statSync(resolvedDest).size;
   } catch (err) {
     console.error(`[upload] ${filename}: stat failed: ${err.message}`);
     return res.status(500).json({ status: 'error', filename, error: `Stat failed: ${err.message}` });
   }
 
-  const parseResult = parseReplay(dest);
+  const parseResult = parseReplay(resolvedDest);
 
   if (parseResult.error) {
     console.warn(`[upload] ${filename}: parse failed — ${parseResult.error}`);
@@ -565,7 +587,8 @@ async function processReplayFile(filename, filePath, res) {
   if (parseResult.gameFingerprint && db.gameExists(parseResult.gameFingerprint)) {
     console.log(`[upload] ${filename}: duplicate game (fingerprint match)`);
     db.markFileProcessed(filename);
-    try { fs.unlinkSync(dest); } catch {}
+    // resolvedDest already validated at function entry
+    try { fs.unlinkSync(resolvedDest); } catch {}
     let matchId = null;
     try {
       const existing = await Match.findOne({ fingerprint: parseResult.gameFingerprint }, '_id').lean();
@@ -670,7 +693,12 @@ router.post('/upload', uploadLimiter, checkAuth, upload.single('replay'), async 
     return res.status(400).json({ error: 'No .StormReplay file provided.' });
   }
   if (!isValidFilename(req.file.originalname)) {
-    try { fs.unlinkSync(req.file.path); } catch {}
+    // Clean up the multer temp file (validated within replayDir)
+    const tempResolved = path.resolve(req.file.path);
+    const replayDirPrefix = path.resolve(config.replayDir) + path.sep;
+    if (tempResolved.startsWith(replayDirPrefix)) {
+      try { fs.unlinkSync(tempResolved); } catch {}
+    }
     return res.status(400).json({ error: 'Invalid filename.' });
   }
   await processReplayFile(req.file.originalname, req.file.path, res);

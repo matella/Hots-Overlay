@@ -15,7 +15,11 @@
     wrap.className = 'hero-icon' + (isMe ? ' is-me' : '');
 
     const img = document.createElement('img');
-    img.src = hero.heroImage;
+    const heroUrl = hero.heroImage;
+    if (heroUrl && typeof heroUrl === 'string' &&
+        (heroUrl.startsWith('/') || heroUrl.startsWith('https://') || heroUrl.startsWith('http://'))) {
+      img.setAttribute('src', heroUrl);
+    }
     img.alt = hero.hero;
     img.loading = 'lazy';
     img.onerror = () => { img.style.opacity = '0.3'; };

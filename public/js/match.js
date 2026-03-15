@@ -4,6 +4,11 @@
   const TALENT_CDN = 'https://raw.githubusercontent.com/heroespatchnotes/heroes-talents/master/images/talents';
   const TIERS = [1, 4, 7, 10, 13, 16, 20];
 
+  function isSafeUrl(url) {
+    if (!url || typeof url !== 'string') return false;
+    return url.startsWith('/') || url.startsWith('https://') || url.startsWith('http://');
+  }
+
   // ── Helpers ─────────────────────────────────────────────────────────
 
   function formatDuration(seconds) {
@@ -27,7 +32,9 @@
 
   function lazyImg(src, alt, cls) {
     const img = document.createElement('img');
-    img.src = src;
+    if (isSafeUrl(src)) {
+      img.setAttribute('src', src);
+    }
     img.alt = alt || '';
     if (cls) img.className = cls;
     img.loading = 'lazy';
@@ -128,7 +135,10 @@
 
     if (talent) {
       const imgEl = el('img', 'talent-icon');
-      imgEl.src = talentImageUrl(player.heroShort, talent.name);
+      const talentUrl = talentImageUrl(player.heroShort, talent.name);
+      if (isSafeUrl(talentUrl)) {
+        imgEl.setAttribute('src', talentUrl);
+      }
       imgEl.alt = talent.name;
       imgEl.loading = 'lazy';
       imgEl.onerror = function () {

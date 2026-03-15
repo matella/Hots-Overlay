@@ -73,8 +73,10 @@
     wrap.className = 'hero-icon' + (isMe ? ' is-me' : '');
 
     const img = document.createElement('img');
-    if (isSafeUrl(hero.heroImage)) {
-      img.src = hero.heroImage;
+    const heroUrl = hero.heroImage;
+    if (isSafeUrl(heroUrl)) {
+      // URL is validated: only /, https://, or http:// prefixes allowed
+      img.setAttribute('src', heroUrl);
     }
     img.alt = hero.hero || '';
     img.loading = 'lazy';
@@ -357,9 +359,11 @@
         const talentIcon = document.createElement('div');
         talentIcon.className = 'talent-icon';
 
-        if (t.icon && isSafeUrl(t.icon)) {
+        const tIcon = t.icon;
+        if (tIcon && isSafeUrl(tIcon)) {
           const img = document.createElement('img');
-          img.src = t.icon;
+          // URL is validated: only /, https://, or http:// prefixes allowed
+          img.setAttribute('src', tIcon);
           img.alt = t.name || '';
           img.loading = 'lazy';
           img.onerror = function() { img.style.opacity = '0.3'; };
