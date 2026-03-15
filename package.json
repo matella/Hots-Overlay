@@ -5,11 +5,9 @@
   "license": "MIT",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js",
-    "migrate": "node scripts/migrate-sqlite-to-mongo.js"
+    "dev": "node --watch server.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.6.2",
     "chokidar": "^5.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
