@@ -532,8 +532,8 @@ impl ReplayApp {
                     .as_array()?
                     .iter()
                     .filter_map(|p| {
-                        let toon = p["toon_handle"].as_str()?.to_string();
-                        let name = p["player_name"].as_str().unwrap_or("").to_string();
+                        let toon = p["toonHandle"].as_str()?.to_string();
+                        let name = p["playerName"].as_str().unwrap_or("").to_string();
                         Some((toon, name))
                     })
                     .collect();

@@ -216,8 +216,8 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "toon_handle": { "type": "string", "example": "2-Hero-1-2844614" },
-                          "player_name": { "type": "string", "example": "matella" }
+                          "toonHandle": { "type": "string", "example": "2-Hero-1-2844614" },
+                          "playerName": { "type": "string", "example": "matella" }
                         }
                       }
                     },
