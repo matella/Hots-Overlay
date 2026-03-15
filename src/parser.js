@@ -3,9 +3,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const Parser = require('hots-parser');
 const config = require('./config');
-const db = require('./database');
 const { normalizeHeroName } = require('./heroNames');
-const { Match } = require('./db/match.model');
+const { Match, ProcessedFile } = require('./db/match.model');
 
 const MAP_OBJECTIVE_NAMES = {
   'Cursed Hollow': 'Tribute',
@@ -304,7 +303,8 @@ async function scanAndParseAll(replayDir, onProgress) {
   const files = fs.readdirSync(resolvedDir)
     .filter(f => f.endsWith('.StormReplay'));
 
-  const processed = db.getAllProcessedFilenames();
+  const processedArray = await ProcessedFile.distinct('filename');
+  const processed = new Set(processedArray);
   const toParse = files.filter(f => !processed.has(f));
 
   let done = 0;
@@ -326,27 +326,7 @@ async function scanAndParseAll(replayDir, onProgress) {
       if (onProgress) onProgress(done, toParse.length);
     }
 
-    // Only DB writes inside the transaction (fast, no CPU work)
-    db.runInTransaction(() => {
-      for (const { file, result } of parsed) {
-        if (result && result.players) {
-          // Skip duplicate games by fingerprint
-          if (result.gameFingerprint && db.gameExists(result.gameFingerprint)) {
-            db.markFileProcessed(file);
-            continue;
-          }
-          for (const playerData of result.players) {
-            db.insertReplay(playerData);
-          }
-          if (result.gameFingerprint) {
-            db.storeGameFingerprint(result.gameFingerprint, file);
-          }
-        }
-        db.markFileProcessed(file);
-      }
-    });
-
-    // Upsert Match documents to MongoDB for all parsed games in this batch
+    // Upsert Match documents and mark processed files in MongoDB
     const mongoOps = [];
     for (const { file, result } of parsed) {
       if (result && result.matchDoc && result.gameFingerprint) {
@@ -355,7 +335,23 @@ async function scanAndParseAll(replayDir, onProgress) {
             { fingerprint: result.gameFingerprint },
             { $setOnInsert: result.matchDoc },
             { upsert: true }
-          ).catch(err => console.error(`[parser] MongoDB upsert failed for ${file}: ${err.message}`))
+          )
+            .catch(err => console.error(`[parser] MongoDB upsert failed for ${file}: ${err.message}`))
+            .then(() =>
+              ProcessedFile.updateOne(
+                { filename: file },
+                { $setOnInsert: { filename: file } },
+                { upsert: true }
+              ).catch(err => console.error(`[parser] ProcessedFile mark failed for ${file}: ${err.message}`))
+            )
+        );
+      } else {
+        mongoOps.push(
+          ProcessedFile.updateOne(
+            { filename: file },
+            { $setOnInsert: { filename: file } },
+            { upsert: true }
+          ).catch(err => console.error(`[parser] ProcessedFile mark failed for ${file}: ${err.message}`))
         );
       }
     }

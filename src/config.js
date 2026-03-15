@@ -1,5 +1,4 @@
 require('dotenv').config({ quiet: true });
-const path = require('path');
 
 // Mode display name overrides: MODE_LABEL_Custom=Scrims in .env
 const modeLabels = {};
@@ -12,7 +11,6 @@ const config = Object.freeze({
   replayDir: process.env.REPLAY_DIR,
   toonHandle: process.env.TOON_HANDLE,
   port: parseInt(process.env.WEBSITES_PORT || process.env.PORT, 10) || 8080,
-  dbPath: path.resolve(process.env.DB_PATH || './data/overlay.db'),
   gameMode: process.env.GAME_MODE || 'Storm League',
   authToken: process.env.AUTH_TOKEN || null,
   ebsUrl: process.env.EBS_URL || null,

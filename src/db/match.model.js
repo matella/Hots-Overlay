@@ -58,6 +58,22 @@ const XpPointSchema = new Schema(
 );
 
 // ---------------------------------------------------------------------------
+// ProcessedFile schema
+// ---------------------------------------------------------------------------
+
+const ProcessedFileSchema = new Schema(
+  {
+    filename: { type: String, unique: true, required: true },
+    status:   { type: String, enum: ['ok', 'parse_error', 'duplicate'], default: 'ok' },
+    parsedAt: { type: Date, default: Date.now },
+  },
+  { collection: 'processed_files' },
+);
+
+const ProcessedFile = mongoose.models.ProcessedFile
+  || mongoose.model('ProcessedFile', ProcessedFileSchema, 'processed_files');
+
+// ---------------------------------------------------------------------------
 // Top-level Match schema
 // ---------------------------------------------------------------------------
 
@@ -99,7 +115,9 @@ const Match = mongoose.models.Match || mongoose.model('Match', MatchSchema);
 
 module.exports = {
   Match,
+  ProcessedFile,
   MatchSchema,
+  ProcessedFileSchema,
   TeamSchema,
   PlayerSchema,
   TalentSchema,
