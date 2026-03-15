@@ -27,7 +27,6 @@ services:
     build: .
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
-      - "2222:2222"
     volumes:
       - overlay-replays:/app/replays
     environment:
