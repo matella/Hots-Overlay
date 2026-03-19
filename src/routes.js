@@ -264,7 +264,7 @@ router.get('/recent', async (req, res) => {
 // Returns recent games grouped with all 10 heroes (both teams) per game.
 // Used by the Twitch Extension video overlay sidebar.
 // Requires a single player to determine "my team" vs "their team".
-router.get('/recent-full', requireExtJwt, async (req, res) => {
+router.get('/recent-full', async (req, res) => {
   try {
     const players = await resolvePlayer(req.query);
     if (!players || players.length !== 1) {
@@ -456,7 +456,7 @@ router.get('/matches', async (req, res) => {
 });
 
 // Lookup a match by gameDate + map + duration (for extension detail view)
-router.get('/matches/lookup', requireExtJwt, async (req, res) => {
+router.get('/matches/lookup', async (req, res) => {
   const gameDate = asString(req.query.gameDate);
   const map = asString(req.query.map);
   const duration = asString(req.query.duration);
