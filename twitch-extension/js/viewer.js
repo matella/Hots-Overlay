@@ -119,6 +119,8 @@
       const msg = JSON.parse(rawMessage);
       if (msg.type === 'session_stats' && msg.session) {
         renderSessionStats(msg.session);
+        // Re-fetch the full game list so new games appear
+        fetchGames();
       }
     } catch (err) {
       console.error('[HotS Overlay] PubSub parse error:', err.message);

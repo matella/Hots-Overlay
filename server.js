@@ -55,6 +55,7 @@ function verifyWsClient({ origin }) {
   if (!origin) return true; // same-origin or non-browser clients
   if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return true;
   if (/^https:\/\/[^/]+\.ext-twitch\.tv$/.test(origin)) return true;
+  if (/^https:\/\/[^/]+\.azurewebsites\.net$/.test(origin)) return true;
   return false;
 }
 

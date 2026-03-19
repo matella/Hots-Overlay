@@ -9,6 +9,7 @@ const { getHeroImageUrl } = require('./heroNames');
 const { getMapImageUrl } = require('./mapImages');
 const { parseReplay } = require('./parser');
 const { verifyExtensionJWT } = require('./twitch');
+const ebs = require('./ebs');
 const { Match, ProcessedFile } = require('./db/match.model');
 const { loadHeroesForMatch, resolveTalent } = require('./talentIcons');
 
@@ -763,6 +764,16 @@ async function processReplayFile(filename, filePath, res) {
         },
       });
     }
+  }
+
+  // Notify the Twitch EBS so PubSub viewers get the update
+  if (config.twitch.broadcasterId && config.twitch.clientId && config.toonHandle) {
+    ebs.notifyNewGame(
+      `http://localhost:${config.port}`,
+      config.twitch.broadcasterId,
+      config.toonHandle,
+      config.gameMode,
+    );
   }
 
   res.json({ status: 'ok', matchId, duplicate: false });
