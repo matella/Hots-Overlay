@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HotS Overlay — Privacy Policy</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0e0e10;
+      color: #efeff1;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container { max-width: 720px; margin: 0 auto; }
+    h1 { color: #bf94ff; font-size: 28px; margin-bottom: 8px; }
+    .updated { color: #adadb8; font-size: 14px; margin-bottom: 32px; }
+    h2 { color: #9147ff; font-size: 20px; margin-top: 28px; margin-bottom: 12px; }
+    p { margin-bottom: 16px; color: #d1d1d6; }
+    ul { margin: 0 0 16px 24px; color: #d1d1d6; }
+    li { margin-bottom: 6px; }
+    strong { color: #efeff1; }
+    a { color: #bf94ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .footer { margin-top: 48px; padding-top: 24px; border-top: 1px solid #27272a; color: #6b7280; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Privacy Policy</h1>
+    <p class="updated">Last updated: March 19, 2026</p>
+
+    <p>HotS Overlay ("the Extension") is a Twitch extension that displays Heroes of the Storm match data as a real-time overlay on a broadcaster's stream. This policy explains what data we collect, how we use it, and your rights.</p>
+
+    <h2>1. Data We Collect</h2>
+    <p>The Extension collects and processes the following data:</p>
+    <ul>
+      <li><strong>Heroes of the Storm replay data:</strong> Match results, hero picks, game mode, map, duration, talent builds, and XP timelines. This data is extracted from .StormReplay files uploaded by the broadcaster's desktop client.</li>
+      <li><strong>Player identifiers:</strong> In-game player names and toon handles (Blizzard's anonymous player identifiers, e.g. <code>2-Hero-1-12345</code>) as they appear in replay files.</li>
+      <li><strong>Twitch viewer identity (minimal):</strong> When viewers interact with the extension, Twitch provides an opaque user ID and channel ID via JWT. We do not store these identifiers.</li>
+    </ul>
+
+    <h2>2. Data We Do Not Collect</h2>
+    <ul>
+      <li>We do not collect real names, email addresses, or other personal contact information.</li>
+      <li>We do not collect Twitch login credentials or passwords.</li>
+      <li>We do not track viewer behavior, browsing history, or use analytics/tracking cookies.</li>
+      <li>We do not collect payment or financial information.</li>
+      <li>We do not sell, share, or transfer any data to third parties.</li>
+    </ul>
+
+    <h2>3. How We Use Data</h2>
+    <p>All collected data is used solely to:</p>
+    <ul>
+      <li>Display match history, win/loss statistics, and talent builds on the broadcaster's stream overlay.</li>
+      <li>Deliver real-time updates to viewers when new games are played.</li>
+    </ul>
+
+    <h2>4. Data Storage &amp; Retention</h2>
+    <p>Match data is stored in a MongoDB database hosted on Microsoft Azure. Data is retained indefinitely to provide historical match statistics. Broadcasters can request deletion of their data by contacting us.</p>
+
+    <h2>5. Data Sharing</h2>
+    <p>We do not share data with any third parties. Match data displayed through the extension is visible to viewers of the broadcaster's channel, consistent with the Extension's purpose as a public overlay.</p>
+
+    <h2>6. Security</h2>
+    <p>All communication between the extension and our servers uses HTTPS/WSS encryption. Upload endpoints require Bearer token authentication. The server enforces rate limiting to prevent abuse.</p>
+
+    <h2>7. Your Rights</h2>
+    <p>If you are a broadcaster using the Extension, you may:</p>
+    <ul>
+      <li>Request a copy of all data associated with your account.</li>
+      <li>Request deletion of all your match data.</li>
+      <li>Uninstall the Extension at any time from your Twitch dashboard.</li>
+    </ul>
+
+    <h2>8. Children's Privacy</h2>
+    <p>The Extension is not directed at children under 13. We do not knowingly collect data from children under 13.</p>
+
+    <h2>9. Changes to This Policy</h2>
+    <p>We may update this policy from time to time. Changes will be posted on this page with an updated date. Continued use of the Extension constitutes acceptance of the updated policy.</p>
+
+    <h2>10. Contact</h2>
+    <p>For privacy questions, data requests, or support:</p>
+    <ul>
+      <li>GitHub: <a href="https://github.com/matella/Hots-Overlay/issues">github.com/matella/Hots-Overlay/issues</a></li>
+    </ul>
+
+    <div class="footer">
+      &copy; 2026 matella &mdash; HotS Overlay is an open-source project licensed under MIT.
+    </div>
+  </div>
+</body>
+</html>
