@@ -1,6 +1,7 @@
 services:
   mongo:
     image: mongo:7
+    stop_grace_period: 60s  # let WiredTiger finish its checkpoint on shutdown (clean reboot)
     volumes:
       - ./data/mongo:/data/db
     healthcheck:
