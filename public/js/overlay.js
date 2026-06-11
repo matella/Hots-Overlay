@@ -175,3 +175,35 @@
 
   document.addEventListener('DOMContentLoaded', init);
 })();
+
+
+// --- Patch digest panel (Nexus Codex phase 5) ---
+(async function initPatchPanel() {
+  try {
+    const res = await fetch('/api/patch-digest');
+    const d = await res.json();
+    if (!d || !d.patchName || !Array.isArray(d.heroes) || d.heroes.length === 0) return;
+
+    const panel = document.getElementById('patch-panel');
+    const counts = { BUFF: 0, NERF: 0, REWORK: 0 };
+    for (const h of d.heroes) if (counts[h.classification] !== undefined) counts[h.classification]++;
+
+    document.getElementById('patch-date').textContent = (d.liveDate || '').slice(0, 10);
+    document.getElementById('patch-counts').innerHTML =
+      (counts.BUFF ? `<span class="pd-badge pd-buff">${counts.BUFF} BUFF</span> ` : '') +
+      (counts.NERF ? `<span class="pd-badge pd-nerf">${counts.NERF} NERF</span> ` : '') +
+      (counts.REWORK ? `<span class="pd-badge pd-rework">${counts.REWORK} RW</span>` : '');
+
+    // Rotate through changed heroes, one every 6s ("Muradin — Q damage 96 → 110 (+15%)").
+    const scroll = document.getElementById('patch-scroll');
+    const entries = d.heroes.filter(h => h.classification && h.classification !== 'BUGFIX');
+    let i = 0;
+    const show = () => {
+      const h = entries[i % entries.length];
+      scroll.textContent = h.summary ? `${h.name} — ${h.summary}` : h.name;
+      i++;
+    };
+    if (entries.length) { show(); setInterval(show, 6000); }
+    panel.style.display = 'flex';
+  } catch (e) { /* digest absent → panel stays hidden */ }
+})();

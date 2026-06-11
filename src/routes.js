@@ -346,6 +346,24 @@ router.get('/recent-full', async (req, res) => {
 
 const BUILD_ID = new Date().toISOString();
 
+// --- Patch digest (Nexus Codex phase 5) ---------------------------------------------------
+// The HotS Patch Notes API on the home box pushes a condensed "latest patch" JSON after each
+// sync (daily, at server boot). Kept in memory: the box re-pushes on its next sync after any
+// restart. POST is protected by the same AUTH_TOKEN as replay uploads; GET is public (the
+// overlay page and the Twitch extension read it).
+let patchDigest = null;
+
+router.post('/patch-digest', checkAuth, express.json({ limit: '64kb' }), (req, res) => {
+  if (!req.body || typeof req.body !== 'object' || !req.body.patchName)
+    return res.status(400).json({ error: 'Invalid digest' });
+  patchDigest = { ...req.body, receivedAt: new Date().toISOString() };
+  res.json({ ok: true });
+});
+
+router.get('/patch-digest', (_req, res) => {
+  res.json(patchDigest || {});
+});
+
 router.get('/health', (_req, res) => {
   res.json({ status: 'ok', build: BUILD_ID });
 });
