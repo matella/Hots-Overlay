@@ -20,7 +20,6 @@ fn log(msg: &str) {
 }
 
 const MAX_RETRIES: u32 = 5;
-const INITIAL_UPLOAD_LIMIT: usize = 10;
 const CONNECTIVITY_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECTIVITY_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -178,9 +177,10 @@ pub async fn upload_file(
     UploadStatus::Failed
 }
 
-/// Scan a directory for .StormReplay files and upload the most recent ones
-/// that haven't been uploaded yet. Only uploads up to INITIAL_UPLOAD_LIMIT files
-/// (newest first) — the file watcher handles new replays going forward.
+/// Scan a directory for .StormReplay files and upload **every** replay not yet uploaded
+/// (full backfill, oldest first so history fills chronologically). The persisted `uploaded`
+/// set + the server's content-hash dedup (409) make this idempotent: the first run uploads the
+/// whole archive, later runs only the new files; the watcher handles replays during a session.
 pub async fn scan_and_upload(
     replay_dir: &Path,
     state: &SharedState,
@@ -239,13 +239,13 @@ pub async fn scan_and_upload(
         return;
     }
 
-    // Sort newest first, take only the most recent N
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
-    candidates.truncate(INITIAL_UPLOAD_LIMIT);
+    // Oldest first → l'historique se remplit chronologiquement. Pas de troncature : on envoie
+    // TOUT le non-uploadé (backfill complet). Dédup garantie par le set persisté + le 409 serveur.
+    candidates.sort_by(|a, b| a.1.cmp(&b.1));
     let to_upload: Vec<PathBuf> = candidates.into_iter().map(|(p, _)| p).collect();
 
     println!(
-        "Uploading {} most recent replays ({} already uploaded, watcher handles the rest)...",
+        "Backfill : envoi de {} replays ({} déjà uploadés ignorés)...",
         to_upload.len(),
         already_uploaded.len()
     );
