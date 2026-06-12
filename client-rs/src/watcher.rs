@@ -7,8 +7,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc as tokio_mpsc;
 
-const STABILITY_THRESHOLD: Duration = Duration::from_secs(5);
-const POLL_INTERVAL: Duration = Duration::from_secs(1);
+// storm-codex (jalon 3) : latence live abaissée (~5 s → ~1 s) ; le serveur dédoublonne de
+// toute façon, donc une stabilisation courte est sûre.
+const STABILITY_THRESHOLD: Duration = Duration::from_secs(1);
+const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct WatcherHandle {
     _watcher: RecommendedWatcher,

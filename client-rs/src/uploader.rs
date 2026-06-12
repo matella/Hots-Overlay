@@ -73,7 +73,8 @@ pub async fn upload_file(
         filename: filename.clone(),
     });
 
-    let url = format!("{}/api/upload-raw", server_url.trim_end_matches('/'));
+    // storm-codex-server (jalon 3) : API neuve `/api/upload` (remplace l'overlay Node /api/upload-raw)
+    let url = format!("{}/api/upload", server_url.trim_end_matches('/'));
     let file_path_owned = file_path.to_path_buf();
     let mut last_err = String::new();
 
