@@ -466,6 +466,31 @@ impl ReplayApp {
                 }
             }
 
+            // Détection sous un dossier parent : trouve tous les dossiers de replays dessous
+            // (tous les comptes/toons), pas besoin de les ajouter un par un.
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("⌕ Auto-detect under folder").size(12.0).color(TEXT_BODY),
+                    )
+                    .fill(BORDER)
+                    .min_size(egui::vec2(170.0, 26.0)),
+                )
+                .clicked()
+            {
+                if let Some(parent) = rfd::FileDialog::new()
+                    .set_title("Select a PARENT folder (all accounts/replays under it)")
+                    .pick_folder()
+                {
+                    for found in detector::find_replay_dirs_under(&parent) {
+                        let dir = found.to_string_lossy().to_string();
+                        if !self.settings_replay_dirs.contains(&dir) {
+                            self.settings_replay_dirs.push(dir);
+                        }
+                    }
+                }
+            }
+
             if ui
                 .add(
                     egui::Button::new(
