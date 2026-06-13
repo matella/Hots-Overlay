@@ -80,6 +80,34 @@ fn main() {
         });
     }
 
+    // Re-scan périodique : les watchers (notify, NonRecursive) ne couvrent que les dossiers présents
+    // au démarrage et peuvent manquer un event. Toutes les 90 s on remonte jusqu'au dossier
+    // `Accounts` (structure HotS) et on re-découvre TOUS les dossiers de replays courants — captant
+    // ainsi un nouveau compte joué après le lancement (ex. multi-comptes) ET tout fichier manqué.
+    // Dédup local + serveur → idempotent et sûr.
+    if !cfg.replay_dirs.is_empty() {
+        let state_rs = state.clone();
+        let tx_rs = tx.clone();
+        let roots = rescan_roots(&cfg.replay_dirs);
+        rt_handle.spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(90)).await;
+                if !state_rs.lock().unwrap().server_connected {
+                    continue;
+                }
+                let mut seen: Vec<PathBuf> = Vec::new();
+                for root in &roots {
+                    for d in detector::find_replay_dirs_under(root) {
+                        if !seen.contains(&d) {
+                            seen.push(d.clone());
+                            uploader::scan_and_upload(&d, &state_rs, &tx_rs).await;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     // Set aggregate watcher status
     if !watcher_handles.is_empty() {
         let mut s = state.lock().unwrap();
@@ -117,6 +145,30 @@ fn main() {
         }),
     )
     .expect("Failed to run eframe");
+}
+
+/// Racines de re-scan : pour chaque dossier configuré, on remonte jusqu'au dossier `Accounts`
+/// (structure HotS) inclus afin que `find_replay_dirs_under` re-découvre tous les comptes — y
+/// compris ceux créés/joués après le démarrage. Si `Accounts` est absent du chemin (dossier
+/// personnalisé), on garde le dossier tel quel. Dédupliqué.
+fn rescan_roots(dirs: &[String]) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for d in dirs {
+        let p = PathBuf::from(d);
+        let root = p
+            .ancestors()
+            .find(|a| {
+                a.file_name()
+                    .map(|n| n.eq_ignore_ascii_case("Accounts"))
+                    .unwrap_or(false)
+            })
+            .map(|a| a.to_path_buf())
+            .unwrap_or_else(|| p.clone());
+        if !roots.contains(&root) {
+            roots.push(root);
+        }
+    }
+    roots
 }
 
 fn load_app_icon() -> egui::IconData {
