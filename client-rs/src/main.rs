@@ -114,6 +114,17 @@ fn main() {
         s.watcher_status = state::WatcherStatus::Watching;
     }
 
+    // Mode headless (Docker, HEADLESS=1) : pas d'UI. Les watchers + le re-scan périodique tournent
+    // déjà ; on draine les events (sinon pas de consommateur) et on bloque pour garder le runtime et
+    // les watchers vivants. Config via env (SERVER_URL / AUTH_TOKEN / REPLAY_DIR).
+    if std::env::var("HEADLESS").is_ok() {
+        println!("Headless: watching {} dir(s), uploading to {}", watcher_handles.len(), cfg.server_url);
+        std::thread::spawn(move || { let mut rx = rx; while rx.blocking_recv().is_some() {} });
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
+
     // Create system tray
     let _tray_icon = tray::create_tray();
 
