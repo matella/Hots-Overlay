@@ -46,7 +46,10 @@ The **desktop client** runs on your gaming PC and watches your replay folder. Wh
 
 The client runs in the system tray and automatically uploads new replays as you play. If the server goes offline, uploads resume automatically when it comes back.
 
-The only setting exposed in the app is the **Replay Directory**. The server URL and auth token are baked into the binary at compile time.
+The **server URL**, **upload token** and **replay directories** are all configured at runtime (in the
+app's Settings, persisted locally) — nothing is baked into the binary, so the same build works against
+any server. For all-Docker setups, the headless uploader image takes the same values via the
+`SERVER_URL` / `AUTH_TOKEN` / `REPLAY_DIR` environment variables.
 
 ### Where to find your replay folder
 
