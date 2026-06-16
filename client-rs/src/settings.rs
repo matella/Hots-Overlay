@@ -92,11 +92,17 @@ pub fn load() -> Settings {
     }
 }
 
-/// Save replay directories to settings.json (server_url and auth_token are build-time constants)
-pub fn save_dirs(dirs: &[String]) -> Result<(), String> {
+/// Persist server URL + token + replay dirs to settings.json. Le serveur et le token sont
+/// configurables par l'utilisateur (plus des constantes de build) : c'est ce qui rend l'.exe
+/// utilisable contre n'importe quel serveur sans rien graver. Champs vides → omis (None).
+pub fn save_config(server_url: &str, auth_token: &str, dirs: &[String]) -> Result<(), String> {
+    let trim = |s: &str| {
+        let t = s.trim();
+        if t.is_empty() { None } else { Some(t.to_string()) }
+    };
     let file_settings = SettingsFile {
-        server_url: None,
-        auth_token: None,
+        server_url: trim(server_url),
+        auth_token: trim(auth_token),
         replay_dirs: if dirs.is_empty() { None } else { Some(dirs.to_vec()) },
         replay_dir: None, // Don't write legacy field
     };

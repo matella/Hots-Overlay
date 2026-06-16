@@ -71,6 +71,12 @@ pub struct ReplayApp {
     obs_picker_open: bool,
     obs_search: String,
     obs_align: usize, // 0=Left, 1=Right
+
+    // Config serveur éditable au runtime (plus une constante de build) — c'est ce qui rend l'.exe
+    // utilisable contre n'importe quel serveur sans rien graver.
+    settings_server_url: String,
+    settings_auth_token: String,
+    connectivity_started: bool, // le check tourne-t-il déjà ? (lancé au boot si URL non vide)
 }
 
 impl ReplayApp {
@@ -81,9 +87,14 @@ impl ReplayApp {
         runtime: tokio::runtime::Handle,
         watcher_handles: Vec<WatcherHandle>,
     ) -> Self {
-        let replay_dirs = {
+        let (replay_dirs, init_server_url, init_auth_token, conn_started) = {
             let s = state.lock().unwrap();
-            s.replay_dirs.clone()
+            (
+                s.replay_dirs.clone(),
+                s.server_url.clone(),
+                s.auth_token.clone().unwrap_or_default(),
+                !s.server_url.trim().is_empty(), // main.rs lance le check si URL non vide au boot
+            )
         };
 
         // Show onboarding if no dirs configured
@@ -117,6 +128,9 @@ impl ReplayApp {
             obs_picker_open: false,
             obs_search: String::new(),
             obs_align: 0,
+            settings_server_url: init_server_url,
+            settings_auth_token: init_auth_token,
+            connectivity_started: conn_started,
         }
     }
 
@@ -398,6 +412,30 @@ impl ReplayApp {
     // ── Settings panel ──────────────────────────────────────────────────
     fn render_settings_panel(&mut self, ui: &mut egui::Ui) {
         ui.add_space(8.0);
+
+        // Server (URL + upload token) — éditable, persisté ; rien n'est gravé dans le binaire.
+        ui.label(egui::RichText::new("SERVER").size(10.0).color(TEXT_DIM));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("URL").size(11.0).color(TEXT_DIM));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings_server_url)
+                    .hint_text("http://192.168.x.x:5102")
+                    .desired_width(280.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Token").size(11.0).color(TEXT_DIM));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.settings_auth_token)
+                    .hint_text("upload token (Admin → Upload tokens)")
+                    .desired_width(280.0)
+                    .password(true)
+                    .font(egui::TextStyle::Monospace),
+            );
+        });
+        ui.add_space(10.0);
 
         // Replay directories
         ui.label(egui::RichText::new("REPLAY DIRECTORIES").size(10.0).color(TEXT_DIM));
@@ -773,6 +811,23 @@ impl ReplayApp {
         ui.add_space(4.0);
     }
 
+    /// Applique l'URL + le token saisis à l'état partagé (le check de connectivité + les uploads les
+    /// relisent), et démarre le check s'il ne tourne pas encore (cas du 1er lancement sans URL au boot).
+    fn apply_server_config(&mut self) {
+        let url = self.settings_server_url.trim().to_string();
+        let token = self.settings_auth_token.trim().to_string();
+        {
+            let mut s = self.state.lock().unwrap();
+            s.server_url = url.clone();
+            s.auth_token = if token.is_empty() { None } else { Some(token) };
+            s.server_connected = false; // force un re-check au prochain tour
+        }
+        if !url.is_empty() && !self.connectivity_started {
+            uploader::start_connectivity_check(self.state.clone(), self.tx.clone(), self.runtime.clone());
+            self.connectivity_started = true;
+        }
+    }
+
     fn save_settings(&mut self) {
         // Validate all directories
         let valid_dirs: Vec<String> = self.settings_replay_dirs.iter()
@@ -796,16 +851,17 @@ impl ReplayApp {
             return;
         }
 
-        if let Err(e) = settings::save_dirs(&valid_dirs) {
+        if let Err(e) = settings::save_config(&self.settings_server_url, &self.settings_auth_token, &valid_dirs) {
             self.save_message = Some((format!("Failed to save: {}", e), false, Instant::now()));
             return;
         }
 
-        // Update shared state
+        // Update shared state (dirs) + serveur/token avec reconnexion à chaud
         {
             let mut s = self.state.lock().unwrap();
             s.replay_dirs = valid_dirs.clone();
         }
+        self.apply_server_config();
 
         // Stop all old watchers
         for handle in self.watcher_handles.drain(..) {
@@ -1011,8 +1067,8 @@ impl ReplayApp {
             .filter(|d| PathBuf::from(d).is_dir())
             .collect();
 
-        // Save to settings
-        if let Err(e) = settings::save_dirs(&selected_dirs) {
+        // Save to settings (serveur/token éventuellement déjà saisis + dossiers)
+        if let Err(e) = settings::save_config(&self.settings_server_url, &self.settings_auth_token, &selected_dirs) {
             eprintln!("Failed to save settings: {}", e);
         }
 
@@ -1021,6 +1077,7 @@ impl ReplayApp {
             let mut s = self.state.lock().unwrap();
             s.replay_dirs = selected_dirs.clone();
         }
+        self.apply_server_config();
 
         // Start watchers
         for dir in &selected_dirs {
