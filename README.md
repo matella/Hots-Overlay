@@ -34,11 +34,15 @@ The **desktop client** runs on your gaming PC and watches your replay folder. Wh
 
 ## Installation (Desktop Client)
 
-1. Download `HotSReplayClient-setup.exe` from the [latest release](https://github.com/matella/Hots-Overlay/releases/latest)
-2. Run the installer — it will install with optional desktop shortcut and auto-start with Windows
-3. Launch **HotS Replay Client**
-4. Click **Settings** and set your **Replay Directory** to your HotS replay folder (see below)
-5. Click **Save** — the client will start uploading your 10 most recent replays and watch for new ones
+> No prebuilt `.exe` is published (it would otherwise bake in a server URL/token). Build it from
+> source — `cargo build --release` in `client-rs/`, then package with Inno Setup — or use the
+> headless Docker uploader (`ghcr.io/matella/hots-uploader`). The binary ships **no** server URL or
+> token: you set them at runtime.
+
+1. Build and run **HotS Replay Client** (or install your packaged build)
+2. Click **Settings** and set the **Server** URL + **upload token** (Admin → Upload tokens)
+3. Set your **Replay Directory** to your HotS replay folder (see below)
+4. Click **Save** — the client uploads your recent replays and watches for new ones
 
 The client runs in the system tray and automatically uploads new replays as you play. If the server goes offline, uploads resume automatically when it comes back.
 
