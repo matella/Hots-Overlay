@@ -1,9 +1,9 @@
 # build-uploader.ps1 — build clé en main de l'uploader Windows pointé sur ton serveur.
 #
 # Usage (PowerShell, depuis la racine du repo Hots-Overlay) :
-#   .\client-rs\build-uploader.ps1 -Server "http://192.168.129.85:5102" -Token "<ton-token>"
+#   .\client-rs\build-uploader.ps1 -Server "http://<server-ip>:5102" -Token "<ton-token>"
 #   # option installeur (si Inno Setup `iscc` est dans le PATH) :
-#   .\client-rs\build-uploader.ps1 -Server "http://192.168.129.85:5102" -Token "<ton-token>" -Installer
+#   .\client-rs\build-uploader.ps1 -Server "http://<server-ip>:5102" -Token "<ton-token>" -Installer
 #
 # Ce qu'il fait : écrit le .env racine (SERVER_URL + AUTH_TOKEN, gitignoré → reste local),
 # `cargo build --release` (l'URL et le token sont figés dans l'exe), et te donne le chemin.
