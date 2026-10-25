@@ -39,6 +39,21 @@ Deux façons de le lancer :
 Il reste dans la barre des tâches et envoie les nouveaux replays automatiquement ; si le serveur est
 hors ligne, les uploads reprennent à son retour.
 
+### Feed live d'une partie (storm-codex `/live`)
+Pendant une partie, l'uploader suit aussi le dossier temporaire de HotS
+(`%TEMP%\Heroes of the Storm\TempWriteReplayP1\`) et le pousse vers la page live de storm-codex. Rien
+n'est décodé sur le PC : il envoie les octets bruts, le serveur les parse. Les étapes :
+- le battlelobby part vers `/api/lobby` dès que l'écran de chargement l'écrit ;
+- `replay.tracker.events` et `replay.game.events` sont envoyés à mesure qu'ils grossissent, par blocs
+  pleins de 4 Ko uniquement, vers `/api/live/chunk` ;
+- la fin de partie (`replay.details` + `replay.initData`) envoie les derniers blocs partiels puis
+  appelle `/api/live/end`.
+
+Si le serveur est injoignable, l'uploader garde sa position dans chaque fichier et rattrape au retour.
+Une partie déjà finie au lancement de l'uploader n'est jamais diffusée. Le dossier surveillé se change
+avec `LIVE_DIR` ; pour l'image Docker, y monter le dossier temporaire Windows. Le journal est dans
+`%LOCALAPPDATA%\HotS Replay Client\client.log` (lignes `live:`).
+
 ### Où trouver ton dossier de replays
 HotS sauvegarde les replays dans :
 ```
