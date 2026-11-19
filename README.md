@@ -6,9 +6,7 @@ The **replay uploader** for Heroes of the Storm: a small client that watches you
 uploads new `.StormReplay` files to a [Storm Codex](https://github.com/matella/storm-codex) server,
 which parses them and powers stats, match pages and OBS overlays.
 
-> **Recommended setup:** run the all-in-one self-hosted bundle —
-> **[storm-codex-suite](https://github.com/matella/storm-codex-suite)** (one `docker compose up`) —
-> then point this uploader at it.
+Use this uploader to send replays from your gaming PC to a server, such as [Storm Codex Suite](https://github.com/matella/storm-codex-suite), or to feed the server’s in-progress `/live` view. The standalone Windows Storm Codex app already imports completed local replays, so it doesn’t need this uploader for that.
 
 ## The uploader
 
@@ -21,10 +19,9 @@ Two ways to run it:
 - **Headless Docker** (`ghcr.io/matella/hots-uploader`) — for all-Docker setups. Configure via the
   `SERVER_URL`, `AUTH_TOKEN` and `REPLAY_DIR` environment variables (the `storm-codex-suite` compose
   has an `uploader` profile that wires these for you).
-- **Native Windows app** (GUI, system tray, auto-start) — no prebuilt `.exe` is published (it would
-  bake in a server/token). Build it from `client-rs/`:
+- **Native Windows app** (GUI, system tray, auto-start). No prebuilt uploader is distributed here. Build it from the repository root:
   ```powershell
-  cargo build --release            # binary in client-rs/target/release/
+  cargo build --release --manifest-path client-rs/Cargo.toml  # output: client-rs/target/release/
   # optional installer (needs Inno Setup `iscc` in PATH):
   .\client-rs\build-uploader.ps1 -Server "http://<server-ip>:5102" -Token "<your-token>" -Installer
   ```
