@@ -50,9 +50,8 @@ fn main() {
     // Check for updates
     updater::check_for_update(state.clone(), rt_handle.clone());
 
-    // Feed live (storm-codex `/live`) : suit TempWriteReplayP1 pendant une partie. Toujours lancé :
-    // serveur et jeton sont relus à chaque tick (configurables à chaud), rien ne part sans serveur.
-    live::start(state.clone());
+    // Feed live (storm-codex `/live`) : garder le handle aussi en mode headless.
+    let _live_watcher = live::start_watcher(state.clone(), rt_handle.clone());
 
     // Start watcher for each replay directory
     let mut watcher_handles = Vec::new();

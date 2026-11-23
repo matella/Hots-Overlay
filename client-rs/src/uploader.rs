@@ -241,7 +241,7 @@ pub async fn scan_and_upload(
 
     // Oldest first → l'historique se remplit chronologiquement. Pas de troncature : on envoie
     // TOUT le non-uploadé (backfill complet). Dédup garantie par le set persisté + le 409 serveur.
-    candidates.sort_by(|a, b| a.1.cmp(&b.1));
+    candidates.sort_by_key(|candidate| candidate.1);
     let to_upload: Vec<PathBuf> = candidates.into_iter().map(|(p, _)| p).collect();
 
     println!(

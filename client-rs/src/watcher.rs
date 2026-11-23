@@ -9,8 +9,8 @@ use tokio::sync::mpsc as tokio_mpsc;
 
 // storm-codex (jalon 3) : latence live abaissée (~5 s → ~1 s) ; le serveur dédoublonne de
 // toute façon, donc une stabilisation courte est sûre.
-const STABILITY_THRESHOLD: Duration = Duration::from_secs(1);
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
+pub(crate) const STABILITY_THRESHOLD: Duration = Duration::from_secs(1);
+pub(crate) const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct WatcherHandle {
     _watcher: RecommendedWatcher,
