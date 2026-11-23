@@ -9,11 +9,12 @@
 //! Le client ne décode rien : le serveur parse (décision opérateur du 2026-10-24). Contrat serveur :
 //! storm-codex `docs/spec/05-api.md`, section « Feed live ».
 //!
-//! On interroge le dossier toutes les secondes plutôt que d'utiliser `notify` : le dossier n'existe
+//! On interroge le dossier périodiquement plutôt que d'utiliser `notify` : le dossier n'existe
 //! pas avant la partie, et la taille listée d'un fichier gardé ouvert par le jeu est périmée. La
 //! taille se lit donc toujours sur le fichier ouvert (lecture partagée).
 
 use crate::state::SharedState;
+use crate::watcher::POLL_INTERVAL;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -32,14 +33,13 @@ const INIT_DATA: &str = "replay.initData";
 const BLOCK: u64 = 4096;
 /// Plafond d'un POST : un rattrapage après une coupure du box reste borné.
 const MAX_CHUNK: u64 = 256 * 1024;
-/// Après l'apparition de `details`, attendre que les deux streams ne bougent plus.
+/// Après l'apparition de `details` et `initData`, attendre que les deux streams ne bougent plus.
 const SETTLE: Duration = Duration::from_secs(2);
-const POLL: Duration = Duration::from_secs(1);
-/// Renvois successifs autorisés sur un même tick (409 en boucle = on laisse passer un tick).
+/// Nombre maximal de morceaux par stream et par tick lors d’un rattrapage.
 const MAX_ROUNDS: usize = 16;
 
 /// Dossier surveillé : `LIVE_DIR` (tests, Docker) sinon `%TEMP%\Heroes of the Storm\TempWriteReplayP1`.
-pub fn default_dir() -> PathBuf {
+fn default_dir() -> PathBuf {
     std::env::var_os("LIVE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -54,7 +54,7 @@ pub fn default_dir() -> PathBuf {
 
 /// Réponse du serveur à un morceau, réduite à ce que le watcher doit en faire.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ChunkReply {
+enum ChunkReply {
     /// `applied` ou `duplicate` : le morceau est acquis.
     Accepted { last_loop: Option<i64> },
     /// `409` : le serveur attend cet offset (redémarrage du box, trou).
@@ -65,7 +65,7 @@ pub enum ChunkReply {
     Retry(String),
 }
 
-pub trait Transport {
+trait Transport {
     /// `Ok(())` si le lobby est acquis (`2xx`, y compris `unchanged`).
     fn lobby(&self, bytes: &[u8]) -> Result<(), String>;
     fn chunk(&self, session: &str, stream: Stream, offset: u64, bytes: &[u8]) -> ChunkReply;
@@ -74,13 +74,13 @@ pub trait Transport {
 }
 
 /// Transport HTTP réel : serveur et jeton relus dans l'état partagé (configurables à chaud).
-pub struct HttpTransport {
+struct HttpTransport {
     state: SharedState,
     agent: ureq::Agent,
 }
 
 impl HttpTransport {
-    pub fn new(state: SharedState) -> Self {
+    fn new(state: SharedState) -> Self {
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
                 .timeout_global(Some(Duration::from_secs(10)))
@@ -91,7 +91,10 @@ impl HttpTransport {
     }
 
     fn target(&self, path: &str) -> Result<(String, Option<String>), String> {
-        let s = self.state.lock().map_err(|_| "état verrouillé".to_string())?;
+        let s = self
+            .state
+            .lock()
+            .map_err(|_| "état verrouillé".to_string())?;
         if s.server_url.is_empty() {
             return Err("aucun serveur configuré".into());
         }
@@ -139,15 +142,21 @@ impl Transport for HttpTransport {
             ("X-Stream", stream.header().to_string()),
             ("X-Offset", offset.to_string()),
         ];
-        match self.post("/api/live/chunk", "application/octet-stream", &headers, bytes) {
-            Ok((status, body)) => parse_chunk_reply(status, &body),
+        match self.post(
+            "/api/live/chunk",
+            "application/octet-stream",
+            &headers,
+            bytes,
+        ) {
+            Ok((status, body)) => parse_chunk_reply(status, &body, offset),
             Err(e) => ChunkReply::Retry(e),
         }
     }
 
     fn end(&self, session: &str) -> Result<(), String> {
         let body = serde_json::json!({ "session": session }).to_string();
-        let (status, text) = self.post("/api/live/end", "application/json", &[], body.as_bytes())?;
+        let (status, text) =
+            self.post("/api/live/end", "application/json", &[], body.as_bytes())?;
         if (200..300).contains(&status) || status == 404 {
             Ok(())
         } else {
@@ -157,7 +166,7 @@ impl Transport for HttpTransport {
 }
 
 /// Traduit une réponse de `POST /api/live/chunk` (contrat `05-api.md`).
-pub fn parse_chunk_reply(status: u16, body: &str) -> ChunkReply {
+fn parse_chunk_reply(status: u16, body: &str, offset: u64) -> ChunkReply {
     let json: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
     let kind = json.get("status").and_then(|v| v.as_str()).unwrap_or("");
     match (status, kind) {
@@ -166,8 +175,8 @@ pub fn parse_chunk_reply(status: u16, body: &str) -> ChunkReply {
         },
         (200, "unreadable") => ChunkReply::Dead("session illisible côté serveur".into()),
         (409, _) => match json.get("expected_offset").and_then(|v| v.as_u64()) {
-            Some(expected) => ChunkReply::Gap { expected },
-            None => ChunkReply::Retry(format!("409 sans expected_offset : {body}")),
+            Some(expected) if expected < offset => ChunkReply::Gap { expected },
+            _ => ChunkReply::Retry(format!("409 sans expected_offset valide : {body}")),
         },
         (413, _) => ChunkReply::Dead("stream trop gros (413)".into()),
         _ => ChunkReply::Retry(format!("HTTP {status} {body}")),
@@ -178,14 +187,12 @@ pub fn parse_chunk_reply(status: u16, body: &str) -> ChunkReply {
 // Fichiers
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stream {
+enum Stream {
     Tracker,
     Game,
 }
 
 impl Stream {
-    const ALL: [Stream; 2] = [Stream::Tracker, Stream::Game];
-
     fn file(self) -> &'static str {
         match self {
             Stream::Tracker => TRACKER,
@@ -193,7 +200,7 @@ impl Stream {
         }
     }
 
-    pub fn header(self) -> &'static str {
+    fn header(self) -> &'static str {
         match self {
             Stream::Tracker => "tracker",
             Stream::Game => "game",
@@ -224,18 +231,38 @@ fn open_shared(path: &Path) -> std::io::Result<File> {
 /// Taille et date lues **sur le fichier ouvert** (le listing du dossier est périmé).
 fn stat(path: &Path) -> Option<(u64, SystemTime)> {
     let meta = open_shared(path).ok()?.metadata().ok()?;
-    Some((meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)))
+    Some((
+        meta.len(),
+        meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+    ))
+}
+
+fn stream_len(path: &Path, offset: u64) -> Option<u64> {
+    match open_shared(path) {
+        Ok(file) => file.metadata().ok().map(|m| m.len()),
+        // Un stream déjà lu doit être observable avant de conclure qu'il a rétréci.
+        Err(e) if offset == 0 && e.kind() == std::io::ErrorKind::NotFound => Some(0),
+        Err(_) => None,
+    }
 }
 
 fn read_range(path: &Path, from: u64, len: u64) -> std::io::Result<Vec<u8>> {
     let mut f = open_shared(path)?;
     f.seek(SeekFrom::Start(from))?;
-    let mut buf = Vec::with_capacity(len as usize);
-    f.take(len).read_to_end(&mut buf)?;
+    let mut buf = vec![0; len as usize];
+    f.read_exact(&mut buf)?;
     Ok(buf)
 }
 
-pub fn sha256_hex(bytes: &[u8]) -> String {
+/// Prochain intervalle à envoyer. Même après un 409 non aligné, on s’arrête sur
+/// une frontière de bloc en cours de partie. `MAX_CHUNK` est un multiple de `BLOCK`.
+fn plan_chunk(offset: u64, file_len: u64, ended: bool) -> Option<std::ops::Range<u64>> {
+    let end = file_len.min(offset.saturating_add(MAX_CHUNK));
+    let end = if ended { end } else { end / BLOCK * BLOCK };
+    (end > offset).then_some(offset..end)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -249,7 +276,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 enum Phase {
     Live,
     /// `details` + `initData` vus : on attend que les streams se stabilisent.
-    Finishing { lens: (u64, u64), since: Instant },
+    Finishing {
+        lens: Option<(u64, u64)>,
+        since: Instant,
+    },
     /// Fin envoyée, ou partie déjà finie quand on l'a découverte : plus rien à faire.
     Done,
 }
@@ -271,13 +301,13 @@ struct Game {
 
 /// Ce que le watcher a fait sur un tick — sert aux tests et au journal.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct TickReport {
-    pub new_session: Option<String>,
-    pub already_finished: bool,
-    pub ended: bool,
+struct TickReport {
+    new_session: Option<String>,
+    already_finished: bool,
+    ended: bool,
 }
 
-pub struct LiveWatcher<T: Transport> {
+struct LiveWatcher<T: Transport> {
     dir: PathBuf,
     transport: T,
     game: Option<Game>,
@@ -288,7 +318,7 @@ pub struct LiveWatcher<T: Transport> {
 }
 
 impl<T: Transport> LiveWatcher<T> {
-    pub fn new(dir: PathBuf, transport: T, log: fn(&str)) -> Self {
+    fn new(dir: PathBuf, transport: T, log: fn(&str)) -> Self {
         Self {
             dir,
             transport,
@@ -315,25 +345,25 @@ impl<T: Transport> LiveWatcher<T> {
         }
     }
 
-    pub fn tick(&mut self, now: Instant) -> TickReport {
+    fn tick(&mut self, now: Instant) -> TickReport {
         let mut report = TickReport::default();
         let lobby_path = self.dir.join(LOBBY);
-        let Some((lobby_len, lobby_mtime)) = stat(&lobby_path) else {
-            return report; // pas de partie (dossier absent ou lobby pas encore écrit)
-        };
-        if lobby_len == 0 {
+        let Some(key @ (lobby_len, lobby_mtime)) = stat(&lobby_path).filter(|(len, _)| *len > 0)
+        else {
             return report;
-        }
+        };
 
-        // Nouveau lobby (ou premier tick) → relire et hacher.
-        if self.lobby_key != Some((lobby_len, lobby_mtime)) {
-            let Ok(bytes) = read_range(&lobby_path, 0, lobby_len) else {
+        if self.lobby_key != Some(key) {
+            let mut bytes = Vec::new();
+            if open_shared(&lobby_path)
+                .and_then(|mut f| f.read_to_end(&mut bytes))
+                .is_err()
+                || bytes.len() as u64 != lobby_len
+                || stat(&lobby_path) != Some(key)
+            {
                 return report;
-            };
-            if bytes.len() as u64 != lobby_len {
-                return report; // en cours d'écriture : on repassera
             }
-            self.lobby_key = Some((lobby_len, lobby_mtime));
+            self.lobby_key = Some(key);
             let session = sha256_hex(&bytes);
             if self.game.as_ref().map(|g| g.session.as_str()) != Some(session.as_str()) {
                 let finished = self.details_of_this_game(lobby_mtime);
@@ -341,7 +371,11 @@ impl<T: Transport> LiveWatcher<T> {
                     "live: lobby {} ({} octets){}",
                     &session[..12],
                     lobby_len,
-                    if finished { " — partie déjà terminée, aucune session live" } else { "" }
+                    if finished {
+                        " — partie déjà terminée, aucune session live"
+                    } else {
+                        ""
+                    }
                 ));
                 report.new_session = Some(session.clone());
                 report.already_finished = finished;
@@ -374,7 +408,10 @@ impl<T: Transport> LiveWatcher<T> {
             match self.transport.lobby(&game.lobby) {
                 Ok(()) => {
                     game.lobby_posted = true;
-                    (self.log)("live: lobby envoyé");
+                    (self.log)(&format!(
+                        "live: session {} démarrée (lobby envoyé)",
+                        &game.session[..12]
+                    ));
                 }
                 Err(e) => {
                     (self.log)(&format!("live: lobby non envoyé ({e}) — nouvel essai"));
@@ -383,17 +420,25 @@ impl<T: Transport> LiveWatcher<T> {
             }
         }
 
-        let lens = (
-            stat(&self.dir.join(TRACKER)).map_or(0, |s| s.0),
-            stat(&self.dir.join(GAME)).map_or(0, |s| s.0),
+        let tracker_len = stream_len(
+            &self.dir.join(TRACKER),
+            game.streams[Stream::Tracker.index()].offset,
         );
-        let ended = self.details_of_this_game(game.lobby_mtime)
-            && self.dir.join(INIT_DATA).exists();
+        let game_len = stream_len(
+            &self.dir.join(GAME),
+            game.streams[Stream::Game.index()].offset,
+        );
+        let lens = tracker_len.zip(game_len);
+        let ended = self.details_of_this_game(game.lobby_mtime) && self.dir.join(INIT_DATA).exists();
 
         match game.phase {
             Phase::Live if !ended => {
-                self.push(game, Stream::Tracker, lens.0 / BLOCK * BLOCK);
-                self.push(game, Stream::Game, lens.1 / BLOCK * BLOCK);
+                if let Some(len) = tracker_len {
+                    self.push(game, Stream::Tracker, len, false);
+                }
+                if let Some(len) = game_len {
+                    self.push(game, Stream::Game, len, false);
+                }
             }
             Phase::Live => {
                 (self.log)("live: fin de partie détectée (details + initData)");
@@ -402,14 +447,21 @@ impl<T: Transport> LiveWatcher<T> {
             Phase::Finishing { lens: prev, since } => {
                 if prev != lens {
                     game.phase = Phase::Finishing { lens, since: now };
-                } else if now.duration_since(since) >= self.settle {
+                    return;
+                }
+                // Une erreur d’ouverture ne doit pas être prise pour un stream vide.
+                let Some((tracker_len, game_len)) = lens else {
+                    return;
+                };
+                if now.duration_since(since) >= self.settle {
                     // Flush final : la queue partielle des deux streams, puis la fin.
-                    self.push(game, Stream::Tracker, lens.0);
-                    self.push(game, Stream::Game, lens.1);
-                    let caught_up = Stream::ALL.iter().all(|s| {
-                        let st = &game.streams[s.index()];
-                        st.dead || st.offset >= if *s == Stream::Tracker { lens.0 } else { lens.1 }
-                    });
+                    self.push(game, Stream::Tracker, tracker_len, true);
+                    self.push(game, Stream::Game, game_len, true);
+                    let caught_up = game
+                        .streams
+                        .iter()
+                        .zip([tracker_len, game_len])
+                        .all(|(st, len)| st.dead || st.offset == len);
                     if !caught_up {
                         return; // box injoignable : on réessaie au tick suivant
                     }
@@ -417,7 +469,7 @@ impl<T: Transport> LiveWatcher<T> {
                         Ok(()) => {
                             (self.log)(&format!(
                                 "live: fin envoyée (tracker {} o, game {} o)",
-                                lens.0, lens.1
+                                tracker_len, game_len
                             ));
                             game.phase = Phase::Done;
                             report.ended = true;
@@ -430,32 +482,30 @@ impl<T: Transport> LiveWatcher<T> {
         }
     }
 
-    /// Pousse `[offset, target)` du stream, par morceaux de `MAX_CHUNK` au plus.
-    fn push(&self, game: &mut Game, stream: Stream, target: u64) {
+    /// Pousse les nouveaux octets du stream, par morceaux de `MAX_CHUNK` au plus.
+    fn push(&self, game: &mut Game, stream: Stream, file_len: u64, ended: bool) {
         let path = self.dir.join(stream.file());
         let st = &mut game.streams[stream.index()];
         if st.dead {
             return;
         }
-        if target < st.offset {
-            // Le fichier a rétréci (recréé ? reconnexion ?) : on repart de zéro, le serveur
-            // dédoublonne ce qu'il a déjà.
+        if file_len < st.offset {
+            // Le fichier a rétréci : on repart de zéro, le serveur dédoublonne ce qu'il a déjà.
             (self.log)(&format!(
                 "live: {} a rétréci ({} < {}), reprise à 0",
                 stream.header(),
-                target,
+                file_len,
                 st.offset
             ));
             st.offset = 0;
         }
         for _ in 0..MAX_ROUNDS {
-            if st.offset >= target {
+            let Some(range) = plan_chunk(st.offset, file_len, ended) else {
                 return;
-            }
-            let len = (target - st.offset).min(MAX_CHUNK);
-            let bytes = match read_range(&path, st.offset, len) {
-                Ok(b) if !b.is_empty() => b,
-                Ok(_) => return,
+            };
+            let len = range.end - range.start;
+            let bytes = match read_range(&path, range.start, len) {
+                Ok(bytes) => bytes,
                 Err(e) => {
                     (self.log)(&format!("live: lecture {} : {e}", stream.header()));
                     return;
@@ -486,6 +536,7 @@ impl<T: Transport> LiveWatcher<T> {
                         st.offset
                     ));
                     st.offset = expected;
+                    return; // Reprendre au prochain poll, avec les tailles fraîches.
                 }
                 ChunkReply::Dead(why) => {
                     (self.log)(&format!("live: {} abandonné : {why}", stream.header()));
@@ -493,7 +544,11 @@ impl<T: Transport> LiveWatcher<T> {
                     return;
                 }
                 ChunkReply::Retry(why) => {
-                    (self.log)(&format!("live: {} @{} en attente : {why}", stream.header(), st.offset));
+                    (self.log)(&format!(
+                        "live: {} @{} en attente : {why}",
+                        stream.header(),
+                        st.offset
+                    ));
                     return;
                 }
             }
@@ -501,20 +556,41 @@ impl<T: Transport> LiveWatcher<T> {
     }
 }
 
-/// Lance le watcher live dans un thread dédié (I/O bloquantes, un tick par seconde).
-pub fn start(state: SharedState) {
+/// Garder le handle en vie tant que le watcher doit tourner ; le drop ferme le canal d’arrêt.
+pub struct LiveWatcherHandle {
+    _stop_tx: tokio::sync::oneshot::Sender<()>,
+}
+
+pub fn start_watcher(state: SharedState, runtime: tokio::runtime::Handle) -> LiveWatcherHandle {
     let dir = default_dir();
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel();
     println!("Live: watching {}", dir.display());
-    std::thread::Builder::new()
-        .name("live-feed".into())
-        .spawn(move || {
-            let mut w = LiveWatcher::new(dir, HttpTransport::new(state), crate::uploader::log);
-            loop {
-                w.tick(Instant::now());
-                std::thread::sleep(POLL);
+    runtime.spawn(async move {
+        let mut watcher = LiveWatcher::new(dir, HttpTransport::new(state), crate::uploader::log);
+        let mut delay = Duration::ZERO;
+        loop {
+            tokio::select! {
+                biased;
+                _ = &mut stop_rx => break,
+                _ = tokio::time::sleep(delay) => {}
             }
-        })
-        .ok();
+            // Comme l’uploader, ne pas bloquer un worker async avec ureq ou le disque.
+            match tokio::task::spawn_blocking(move || {
+                watcher.tick(Instant::now());
+                watcher
+            })
+            .await
+            {
+                Ok(next) => watcher = next,
+                Err(e) => {
+                    crate::uploader::log(&format!("live: watcher arrêté ({e})"));
+                    break;
+                }
+            }
+            delay = POLL_INTERVAL;
+        }
+    });
+    LiveWatcherHandle { _stop_tx: stop_tx }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -523,7 +599,10 @@ pub fn start(state: SharedState) {
 mod tests {
     use super::*;
     use std::cell::RefCell;
-    use std::io::Write;
+    use std::collections::HashMap;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::{mpsc, Arc, Mutex};
 
     #[derive(Debug, Clone, PartialEq)]
     enum Call {
@@ -616,10 +695,9 @@ mod tests {
     fn partie_deja_finie_au_demarrage_rien_n_est_envoye() {
         let d = Dir::new("finie");
         d.write(LOBBY, b"lobby-A");
-        d.age(LOBBY, 600);
         d.append(TRACKER, 9000);
         d.write(DETAILS, b"d");
-        d.write(INIT_DATA, b"i");
+        d.age(LOBBY, 60);
         let f = Fake::default();
         let mut w = watcher(&d, &f);
         let r = w.tick(Instant::now());
@@ -630,17 +708,41 @@ mod tests {
 
     #[test]
     fn details_residuel_plus_vieux_que_le_lobby_n_arrete_pas_la_partie() {
-        let d = Dir::new("residuel");
+        let d = Dir::new("residuel-apres-fin");
+        d.write(LOBBY, b"ancien-lobby");
+        d.age(LOBBY, 120);
         d.write(DETAILS, b"d");
-        d.write(INIT_DATA, b"i");
-        d.age(DETAILS, 600);
-        d.write(LOBBY, b"lobby-B");
-        d.append(TRACKER, 4096);
+        d.age(DETAILS, 60);
         let f = Fake::default();
         let mut w = watcher(&d, &f);
+        assert!(w.tick(Instant::now()).already_finished);
+        d.write(LOBBY, b"lobby-B");
+        d.append(TRACKER, 4096);
         let r = w.tick(Instant::now());
         assert!(!r.already_finished);
-        assert_eq!(f.take(), vec![Call::Lobby(7), Call::Chunk("tracker", 0, 4096)]);
+        assert_eq!(
+            f.take(),
+            vec![Call::Lobby(7), Call::Chunk("tracker", 0, 4096)]
+        );
+    }
+
+    #[test]
+    fn details_residuel_au_demarrage_n_arrete_pas_le_nouveau_lobby() {
+        let d = Dir::new("residuel");
+        d.write(DETAILS, b"d");
+        d.age(DETAILS, 600);
+        let f = Fake::default();
+        let mut w = watcher(&d, &f);
+        w.tick(Instant::now()); // Seul le marqueur de la partie précédente est présent.
+        assert!(f.take().is_empty());
+        d.write(LOBBY, b"lobby-B");
+        d.append(TRACKER, 4096);
+        let r = w.tick(Instant::now());
+        assert!(!r.already_finished);
+        assert_eq!(
+            f.take(),
+            vec![Call::Lobby(7), Call::Chunk("tracker", 0, 4096)]
+        );
     }
 
     #[test]
@@ -652,7 +754,10 @@ mod tests {
         let f = Fake::default();
         let mut w = watcher(&d, &f);
         w.tick(Instant::now());
-        assert_eq!(f.take(), vec![Call::Lobby(7), Call::Chunk("tracker", 0, 20480)]);
+        assert_eq!(
+            f.take(),
+            vec![Call::Lobby(7), Call::Chunk("tracker", 0, 20480)]
+        );
 
         // Rien de neuf → rien d'envoyé ; le lobby n'est pas renvoyé.
         w.tick(Instant::now());
@@ -664,7 +769,10 @@ mod tests {
         w.tick(Instant::now());
         assert_eq!(
             f.take(),
-            vec![Call::Chunk("tracker", 20480, 4096), Call::Chunk("game", 0, 4096)]
+            vec![
+                Call::Chunk("tracker", 20480, 4096),
+                Call::Chunk("game", 0, 4096)
+            ]
         );
     }
 
@@ -680,7 +788,10 @@ mod tests {
         assert_eq!(f.take(), vec![Call::Lobby(7)]);
         *f.lobby_fails.borrow_mut() = false;
         w.tick(Instant::now());
-        assert_eq!(f.take(), vec![Call::Lobby(7), Call::Chunk("tracker", 0, 4096)]);
+        assert_eq!(
+            f.take(),
+            vec![Call::Lobby(7), Call::Chunk("tracker", 0, 4096)]
+        );
     }
 
     #[test]
@@ -696,10 +807,9 @@ mod tests {
         d.append(TRACKER, 4096);
         f.replies.borrow_mut().push(ChunkReply::Gap { expected: 0 });
         w.tick(Instant::now());
-        assert_eq!(
-            f.take(),
-            vec![Call::Chunk("tracker", 8192, 4096), Call::Chunk("tracker", 0, 12288)]
-        );
+        assert_eq!(f.take(), vec![Call::Chunk("tracker", 8192, 4096)]);
+        w.tick(Instant::now());
+        assert_eq!(f.take(), vec![Call::Chunk("tracker", 0, 12288)]);
     }
 
     #[test]
@@ -709,16 +819,21 @@ mod tests {
         d.append(TRACKER, 4096);
         let f = Fake::default();
         let mut w = watcher(&d, &f);
-        f.replies.borrow_mut().push(ChunkReply::Retry("down".into()));
         w.tick(Instant::now());
-        d.append(TRACKER, 8192);
+        f.replies
+            .borrow_mut()
+            .push(ChunkReply::Retry("down".into()));
+        d.append(TRACKER, 4096);
+        w.tick(Instant::now());
+        d.append(TRACKER, 4096);
         w.tick(Instant::now());
         assert_eq!(
             f.take(),
             vec![
                 Call::Lobby(7),
                 Call::Chunk("tracker", 0, 4096),
-                Call::Chunk("tracker", 0, 12288)
+                Call::Chunk("tracker", 4096, 4096),
+                Call::Chunk("tracker", 4096, 8192)
             ]
         );
     }
@@ -734,7 +849,10 @@ mod tests {
         w.tick(Instant::now());
         d.append(TRACKER, 4096);
         w.tick(Instant::now());
-        assert_eq!(f.take(), vec![Call::Lobby(7), Call::Chunk("tracker", 0, 4096)]);
+        assert_eq!(
+            f.take(),
+            vec![Call::Lobby(7), Call::Chunk("tracker", 0, 4096)]
+        );
     }
 
     #[test]
@@ -753,6 +871,73 @@ mod tests {
                 Call::Chunk("tracker", MAX_CHUNK, 8192)
             ]
         );
+    }
+
+    #[test]
+    fn tracker_recree_sous_le_meme_lobby_repart_a_zero_puis_end() {
+        let d = Dir::new("tracker-recree");
+        d.write(LOBBY, b"lobby");
+        d.age(LOBBY, 60);
+        d.append(TRACKER, 4096);
+        let f = Fake::default();
+        let mut w = watcher(&d, &f);
+        let t = Instant::now();
+        w.tick(t);
+        assert_eq!(
+            f.take(),
+            vec![Call::Lobby(5), Call::Chunk("tracker", 0, 4096)]
+        );
+
+        std::fs::remove_file(d.0.join(TRACKER)).unwrap();
+        d.write(TRACKER, &[3; 23]);
+        d.write(DETAILS, b"d");
+        d.write(INIT_DATA, b"i");
+        let end_seen = t + POLL_INTERVAL;
+        assert!(!w.tick(end_seen).ended);
+        assert!(f.take().is_empty());
+        assert!(w.tick(end_seen + SETTLE).ended);
+        assert_eq!(
+            f.take(),
+            vec![Call::Chunk("tracker", 0, 23), Call::End]
+        );
+    }
+
+    #[test]
+    fn tracker_temporairement_absent_garde_l_offset_et_flush_avant_end() {
+        let d = Dir::new("tracker-absent");
+        d.write(LOBBY, b"lobby");
+        d.age(LOBBY, 60);
+        d.append(TRACKER, 4096);
+        let f = Fake::default();
+        let mut w = LiveWatcher::new(d.0.clone(), &f, nolog);
+        let t = Instant::now();
+        w.tick(t);
+        assert_eq!(
+            f.take(),
+            vec![Call::Lobby(5), Call::Chunk("tracker", 0, 4096)]
+        );
+
+        d.append(TRACKER, 23);
+        d.write(DETAILS, b"d");
+        d.write(INIT_DATA, b"i");
+        let tracker = d.0.join(TRACKER);
+        let moved = d.0.join("tracker-moved");
+        std::fs::rename(&tracker, &moved).unwrap();
+        let end_seen = t + POLL_INTERVAL;
+        for now in [end_seen, end_seen + SETTLE] {
+            let report = w.tick(now);
+            let offset = w.game.as_ref().unwrap().streams[Stream::Tracker.index()].offset;
+            assert_eq!(offset, 4096);
+            assert!(!report.ended);
+            assert!(f.take().is_empty());
+        }
+
+        std::fs::rename(&moved, &tracker).unwrap();
+        let restored = end_seen + SETTLE + POLL_INTERVAL;
+        assert!(!w.tick(restored).ended);
+        assert!(f.take().is_empty());
+        assert!(w.tick(restored + SETTLE).ended);
+        assert_eq!(f.take(), vec![Call::Chunk("tracker", 4096, 23), Call::End]);
     }
 
     #[test]
@@ -792,37 +977,282 @@ mod tests {
         let d = Dir::new("next");
         d.write(LOBBY, b"lobby-J");
         d.append(TRACKER, 8192);
+        d.append(GAME, 8192);
         let f = Fake::default();
         let mut w = watcher(&d, &f);
         let r = w.tick(Instant::now());
         let first = r.new_session.unwrap();
         f.take();
-        // Partie suivante : nouveau lobby, streams repartis de zéro.
-        d.write(LOBBY, b"lobby-K-plus-long");
+        // Partie suivante : nouveau hash, même taille du lobby.
+        d.write(LOBBY, b"lobby-K");
+        d.age(LOBBY, 60);
         d.write(TRACKER, &[1u8; 4096]);
+        d.write(GAME, &[2u8; 4096]);
         let r = w.tick(Instant::now());
         assert_ne!(r.new_session.unwrap(), first);
-        assert_eq!(f.take(), vec![Call::Lobby(17), Call::Chunk("tracker", 0, 4096)]);
+        assert_eq!(
+            f.take(),
+            vec![
+                Call::Lobby(7),
+                Call::Chunk("tracker", 0, 4096),
+                Call::Chunk("game", 0, 4096)
+            ]
+        );
     }
 
     #[test]
     fn reponses_du_serveur() {
         assert_eq!(
-            parse_chunk_reply(200, r#"{"status":"applied","consumed":4000,"last_loop":512,"events":9}"#),
-            ChunkReply::Accepted { last_loop: Some(512) }
+            parse_chunk_reply(
+                200,
+                r#"{"status":"applied","consumed":4000,"last_loop":512,"events":9}"#,
+                12288
+            ),
+            ChunkReply::Accepted {
+                last_loop: Some(512)
+            }
         );
         assert_eq!(
-            parse_chunk_reply(200, r#"{"status":"duplicate"}"#),
+            parse_chunk_reply(200, r#"{"status":"duplicate"}"#, 12288),
             ChunkReply::Accepted { last_loop: None }
         );
         assert_eq!(
-            parse_chunk_reply(409, r#"{"status":"gap","expected_offset":8192}"#),
+            parse_chunk_reply(409, r#"{"status":"gap","expected_offset":8192}"#, 12288),
             ChunkReply::Gap { expected: 8192 }
         );
-        assert!(matches!(parse_chunk_reply(200, r#"{"status":"unreadable"}"#), ChunkReply::Dead(_)));
-        assert!(matches!(parse_chunk_reply(413, r#"{"status":"too_large"}"#), ChunkReply::Dead(_)));
-        assert!(matches!(parse_chunk_reply(401, ""), ChunkReply::Retry(_)));
-        assert!(matches!(parse_chunk_reply(502, "bad gateway"), ChunkReply::Retry(_)));
+        assert!(matches!(
+            parse_chunk_reply(200, r#"{"status":"unreadable"}"#, 12288),
+            ChunkReply::Dead(_)
+        ));
+        assert!(matches!(
+            parse_chunk_reply(413, r#"{"status":"too_large"}"#, 12288),
+            ChunkReply::Dead(_)
+        ));
+        assert!(matches!(
+            parse_chunk_reply(401, "", 12288),
+            ChunkReply::Retry(_)
+        ));
+        assert!(matches!(
+            parse_chunk_reply(502, "bad gateway", 12288),
+            ChunkReply::Retry(_)
+        ));
+        assert!(matches!(
+            parse_chunk_reply(409, r#"{"expected_offset":8192}"#, 4096),
+            ChunkReply::Retry(_)
+        ));
+    }
+
+    #[test]
+    fn plan_blocs_pleins_et_croissance() {
+        assert_eq!(plan_chunk(0, 4096, false), Some(0..4096));
+        assert_eq!(plan_chunk(0, 8193, false), Some(0..8192));
+        assert_eq!(plan_chunk(8192, 8193, false), None);
+        assert_eq!(plan_chunk(8192, 8192, false), None);
+        assert_eq!(plan_chunk(8192, 4096, false), None);
+        assert_eq!(plan_chunk(8192, 12288, false), Some(8192..12288));
+        assert_eq!(plan_chunk(8192, 8193, true), Some(8192..8193));
+    }
+
+    #[test]
+    fn rattrapage_non_aligne_se_termine_sur_une_frontiere_de_bloc() {
+        let offset = 37;
+        let file_len = MAX_CHUNK + BLOCK;
+        assert_eq!(plan_chunk(offset, file_len, false), Some(offset..MAX_CHUNK));
+        assert_eq!(
+            plan_chunk(MAX_CHUNK, file_len, false),
+            Some(MAX_CHUNK..file_len)
+        );
+    }
+
+    #[test]
+    fn fin_attend_init_data_la_stabilite_et_le_rattrapage() {
+        let d = Dir::new("deferred-end");
+        let f = Fake::default();
+        let mut w = LiveWatcher::new(d.0.clone(), &f, nolog);
+        let t = Instant::now();
+        d.write(LOBBY, b"lobby");
+        d.age(LOBBY, 60);
+        d.append(GAME, 23);
+        d.write(TRACKER, b"");
+        w.tick(t);
+        assert_eq!(f.take(), vec![Call::Lobby(5)]); // Pas de délai de stabilisation du lobby.
+        d.write(DETAILS, b"d");
+        w.tick(t + POLL_INTERVAL);
+        assert!(!w.tick(t + POLL_INTERVAL + SETTLE).ended);
+        assert!(f.take().is_empty());
+        d.write(INIT_DATA, b"i");
+        let end_seen = t + POLL_INTERVAL * 2 + SETTLE;
+        w.tick(end_seen);
+        d.append(GAME, 10);
+        let last_growth = end_seen + POLL_INTERVAL;
+        w.tick(last_growth);
+        w.tick(end_seen + SETTLE);
+        assert!(f.take().is_empty());
+        f.replies
+            .borrow_mut()
+            .push(ChunkReply::Retry("down".into()));
+        w.tick(last_growth + SETTLE);
+        assert_eq!(f.take(), vec![Call::Chunk("game", 0, 33)]);
+        w.tick(last_growth + SETTLE + POLL_INTERVAL);
+        assert_eq!(f.take(), vec![Call::Chunk("game", 0, 33), Call::End]);
+    }
+
+    struct HttpRequest {
+        line: String,
+        headers: HashMap<String, String>,
+        body: Vec<u8>,
+    }
+
+    impl HttpRequest {
+        fn read(stream: &mut TcpStream) -> Self {
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let mut headers = HashMap::new();
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap();
+                if header == "\r\n" {
+                    break;
+                }
+                let (key, value) = header.split_once(':').unwrap();
+                headers.insert(key.to_ascii_lowercase(), value.trim().to_string());
+            }
+            let mut body = vec![0; headers["content-length"].parse().unwrap()];
+            reader.read_exact(&mut body).unwrap();
+            Self {
+                line,
+                headers,
+                body,
+            }
+        }
+    }
+
+    #[test]
+    fn live_http_loopback_smoke() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let (stop, stopped) = mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let request = HttpRequest::read(&mut stream);
+                        let (status, body) = if requests.len() == 3 {
+                            ("409 Conflict", r#"{"status":"gap","expected_offset":0}"#)
+                        } else {
+                            ("200 OK", r#"{"status":"applied"}"#)
+                        };
+                        write!(stream,
+                            "HTTP/1.1 {status}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+                            body.len()
+                        ).unwrap();
+                        requests.push(request);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if stopped.recv_timeout(Duration::from_millis(1))
+                            != Err(mpsc::RecvTimeoutError::Timeout)
+                        {
+                            return requests;
+                        }
+                    }
+                    Err(e) => panic!("accept: {e}"),
+                }
+            }
+        });
+
+        let state = Arc::new(Mutex::new(crate::state::AppState::new(
+            String::new(),
+            Some("smoke-token".into()),
+            Vec::new(),
+            Default::default(),
+        )));
+        let transport = || HttpTransport {
+            state: state.clone(),
+            agent: ureq::Agent::new_with_config(
+                ureq::config::Config::builder()
+                    .proxy(None)
+                    .timeout_global(Some(Duration::from_secs(5)))
+                    .http_status_as_error(false)
+                    .build(),
+            ),
+        };
+        let d = Dir::new("http-smoke");
+        let lobby = b"\x00\xfflobby\r\n";
+        let session = "a394956ee014c712bec40280feeddfe172ddaba9946966fa46d76817efc506de";
+        let block = BLOCK as usize;
+        let mut tracker = vec![0x91; block];
+        let game = vec![0xe2; block];
+        d.write(LOBBY, lobby);
+        d.age(LOBBY, 60);
+        d.write(TRACKER, &tracker);
+        d.write(GAME, &game);
+        let mut w = LiveWatcher::new(d.0.clone(), transport(), nolog);
+        let t = Instant::now();
+        w.tick(t); // Pas d'URL au démarrage ; l'URL est ensuite configurée à chaud.
+        state.lock().unwrap().server_url = url;
+        w.tick(t + POLL_INTERVAL);
+        tracker.extend_from_slice(&vec![0xfe; block]);
+        d.write(TRACKER, &tracker);
+        w.tick(t + POLL_INTERVAL * 2); // 409 à l'offset 4096.
+        w.tick(t + POLL_INTERVAL * 3); // Reprise à 0.
+        let tracker_tail = b"\xff\x00tracker";
+        let game_tail = b"game\r\n\x00";
+        d.write(TRACKER, &[tracker.as_slice(), tracker_tail].concat());
+        d.write(GAME, &[game.as_slice(), game_tail].concat());
+        d.write(DETAILS, b"d");
+        d.write(INIT_DATA, b"i");
+        let end_seen = t + POLL_INTERVAL * 4;
+        assert!(!w.tick(end_seen).ended);
+        assert!(w.tick(end_seen + SETTLE).ended);
+        drop(w);
+
+        let mut restarted = LiveWatcher::new(d.0.clone(), transport(), nolog);
+        let restart = end_seen + SETTLE + POLL_INTERVAL;
+        assert!(restarted.tick(restart).already_finished);
+        restarted.tick(restart + SETTLE + POLL_INTERVAL);
+        drop(stop);
+        let requests = server.join().unwrap();
+        assert_eq!(
+            requests.len(),
+            8,
+            "aucun POST supplémentaire au redémarrage"
+        );
+        for request in &requests {
+            assert_eq!(request.headers["authorization"], "Bearer smoke-token");
+        }
+        assert_eq!(requests[0].line, "POST /api/lobby HTTP/1.1\r\n");
+        assert_eq!(
+            requests[0].headers["content-type"],
+            "application/octet-stream"
+        );
+        assert_eq!(requests[0].body, lobby);
+        for (request, (stream, offset, bytes)) in requests[1..7].iter().zip([
+            ("tracker", 0, &tracker[..block]),
+            ("game", 0, game.as_slice()),
+            ("tracker", block, &tracker[block..]),
+            ("tracker", 0, tracker.as_slice()),
+            ("tracker", 2 * block, tracker_tail.as_slice()),
+            ("game", block, game_tail.as_slice()),
+        ]) {
+            assert_eq!(request.line, "POST /api/live/chunk HTTP/1.1\r\n");
+            assert_eq!(request.headers["content-type"], "application/octet-stream");
+            assert_eq!(request.headers["x-session"], session);
+            assert_eq!(request.headers["x-stream"], stream);
+            assert_eq!(request.headers["x-offset"], offset.to_string());
+            assert_eq!(request.body, bytes);
+        }
+        assert_eq!(requests[7].line, "POST /api/live/end HTTP/1.1\r\n");
+        assert_eq!(requests[7].headers["content-type"], "application/json");
+        assert_eq!(
+            requests[7].body,
+            format!(r#"{{"session":"{session}"}}"#).as_bytes()
+        );
     }
 
     #[test]
@@ -830,6 +1260,10 @@ mod tests {
         assert_eq!(
             sha256_hex(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
     }
 }

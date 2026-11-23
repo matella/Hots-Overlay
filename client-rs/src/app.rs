@@ -11,6 +11,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+type ObsPlayersResult = (Vec<(String, String)>, Option<String>);
+
 // --- Colors ---
 const BG_DARK: egui::Color32 = egui::Color32::from_rgb(0x11, 0x18, 0x27);
 const BG_PANEL: egui::Color32 = egui::Color32::from_rgb(0x1f, 0x29, 0x37);
@@ -66,7 +68,7 @@ pub struct ReplayApp {
     obs_mode: usize, // 0=Storm League, 1=Custom/Scrims, 2=All
     obs_all_players: Vec<(String, String)>, // (toon_handle, player_name) from server
     obs_players_loaded: bool,
-    obs_players_pending: Arc<Mutex<Option<(Vec<(String, String)>, Option<String>)>>>,
+    obs_players_pending: Arc<Mutex<Option<ObsPlayersResult>>>,
     obs_selected: Vec<(String, String)>, // selected players (toon, name)
     obs_picker_open: bool,
     obs_search: String,
@@ -329,7 +331,7 @@ impl ReplayApp {
 
         egui::Frame::new()
             .fill(BG_PANEL)
-            .stroke(egui::Stroke::new(1.0, BORDER))
+            .stroke(egui::Stroke::new(1.0_f32, BORDER))
             .corner_radius(8.0)
             .inner_margin(egui::Margin::same(0))
             .show(ui, |ui| {
@@ -581,7 +583,7 @@ impl ReplayApp {
 
         self.runtime.spawn(async move {
             let url = format!("{}/api/players", server_url);
-            let result = tokio::task::spawn_blocking(move || -> Option<(Vec<(String, String)>, Option<String>)> {
+            let result = tokio::task::spawn_blocking(move || -> Option<ObsPlayersResult> {
                 let agent = ureq::Agent::new_with_config(
                     ureq::config::Config::builder()
                         .timeout_global(Some(std::time::Duration::from_secs(10)))
@@ -951,7 +953,7 @@ impl ReplayApp {
                         // No dirs detected
                         egui::Frame::new()
                             .fill(BG_PANEL)
-                            .stroke(egui::Stroke::new(1.0, BORDER))
+                            .stroke(egui::Stroke::new(1.0_f32, BORDER))
                             .corner_radius(8.0)
                             .inner_margin(egui::Margin::symmetric(16, 12))
                             .show(ui, |ui| {
@@ -978,7 +980,7 @@ impl ReplayApp {
 
                         egui::Frame::new()
                             .fill(BG_PANEL)
-                            .stroke(egui::Stroke::new(1.0, BORDER))
+                            .stroke(egui::Stroke::new(1.0_f32, BORDER))
                             .corner_radius(8.0)
                             .inner_margin(egui::Margin::symmetric(12, 8))
                             .show(ui, |ui| {
@@ -1149,8 +1151,8 @@ impl eframe::App for ReplayApp {
         visuals.extreme_bg_color = BG_DARK;
         visuals.widgets.noninteractive.bg_fill = BG_PANEL;
         visuals.widgets.inactive.bg_fill = BG_PANEL;
-        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, TEXT_SECONDARY);
-        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, TEXT_SECONDARY);
+        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT_SECONDARY);
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0_f32, TEXT_SECONDARY);
         visuals.selection.bg_fill = BLUE;
         ctx.set_visuals(visuals);
 
@@ -1166,7 +1168,7 @@ impl eframe::App for ReplayApp {
                 egui::Frame::new()
                     .fill(BG_PANEL)
                     .inner_margin(egui::Margin::symmetric(16, 10))
-                    .stroke(egui::Stroke::new(1.0, BORDER)),
+                    .stroke(egui::Stroke::new(1.0_f32, BORDER)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -1247,7 +1249,7 @@ impl eframe::App for ReplayApp {
                     egui::Frame::new()
                         .fill(BG_PANEL)
                         .inner_margin(egui::Margin::symmetric(16, 8))
-                        .stroke(egui::Stroke::new(1.0, BORDER)),
+                        .stroke(egui::Stroke::new(1.0_f32, BORDER)),
                 )
                 .show(ctx, |ui| {
                     match self.active_panel {
@@ -1270,7 +1272,7 @@ impl eframe::App for ReplayApp {
                 .frame(
                     egui::Frame::new()
                         .fill(BG_PANEL)
-                        .stroke(egui::Stroke::new(1.0, BORDER))
+                        .stroke(egui::Stroke::new(1.0_f32, BORDER))
                         .corner_radius(8.0)
                         .inner_margin(egui::Margin::same(12)),
                 )
